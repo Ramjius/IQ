@@ -4,30 +4,43 @@ const cors = require('cors');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
-const mysql = require('mysql2');
+const { Pool } = require('pg');
 require('dotenv').config();
 
 const app = express();
 app.use(bodyParser.json());
-app.use(cors({ origin: 'http://localhost:5000' }));
+app.use(cors());
 app.use(express.static(path.join(__dirname, 'public'))); // serve static files
 
-// MySQL connection setup
-const connection = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+// PostgreSQL connection setup
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
 });
 
+// Helper to run queries (compatible interface replacing MySQL callback style)
+const connection = {
+  query: (sql, params, callback) => {
+    if (typeof params === 'function') {
+      callback = params;
+      params = [];
+    }
+    // Convert MySQL ? placeholders to PostgreSQL $1, $2, ...
+    let i = 1;
+    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+    pool.query(pgSql, params, (err, result) => {
+      if (err) return callback(err, null);
+      callback(null, result.rows);
+    });
+  }
+};
 
-// Connect to the database
-connection.connect((err) => {
+pool.connect((err, client, release) => {
   if (err) {
-    console.error('Error connecting to MySQL:', err);
+    console.error('Error connecting to PostgreSQL:', err);
     return;
   }
-  console.log('Connected to MySQL database');
+  release();
+  console.log('Connected to PostgreSQL database');
 });
 
 // Route for serving the dashboard
@@ -1533,9 +1546,8 @@ app.get('/api/next-quotation-number', (req, res) => {
 });
 
 const PORT = 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
-  // If running as child process, notify parent
   if (process.send) {
     process.send('ready');
   }

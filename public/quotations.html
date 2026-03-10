@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoicing App - New Quotation</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 20px; background-color: #ffffff; color: black; }
+    header h1 { margin: 0; font-size: 36px; }
+    header img { height: 60px; }
+    .nav-menu { background-color: #212121; padding: 10px 20px; text-align: center; }
+    .nav-menu a { color: white; text-decoration: none; margin: 0 15px; font-size: 16px; padding: 5px 10px; border-radius: 4px; transition: background-color 0.3s; }
+    .nav-menu a:hover { background-color: #424242; }
+    .nav-menu a.active { background-color: #4caf50; }
+    .form-container { max-width: 900px; margin: 30px auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; font-weight: bold; margin-bottom: 5px; }
+    .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    .form-row { display: flex; gap: 15px; }
+    .form-row .form-group { flex: 1; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background-color: #f5f5f5; }
+    .item-input { width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
+    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn-add { background-color: #4caf50; color: white; margin-bottom: 10px; }
+    .btn-remove { background-color: #f44336; color: white; padding: 5px 10px; }
+    .btn-save { background-color: #2196f3; color: white; margin-right: 10px; }
+    .btn-export { background-color: #e91e63; color: white; }
+    .total-section { text-align: right; font-size: 18px; font-weight: bold; margin: 15px 0; }
+    .actions { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>New Quotation</h1>
+    <img src="/logo.png" alt="Company Logo">
+  </header>
+  <div class="nav-menu">
+    <a href="/">Dashboard</a>
+    <a href="/invoices">Invoices</a>
+    <a href="/quotations" class="active">Quotations</a>
+  </div>
+  <div class="form-container">
+    <form id="quotationForm">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Quote Number</label>
+          <input type="text" id="quoteNumber" name="quoteNumber" readonly>
+        </div>
+        <div class="form-group">
+          <label>Due Date</label>
+          <input type="date" id="dueDate" name="dueDate">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Customer Name</label>
+          <input type="text" id="customerName" name="customerName" required>
+        </div>
+        <div class="form-group">
+          <label>Address</label>
+          <input type="text" id="address" name="address">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Salesperson</label>
+          <input type="text" id="salesperson" name="salesperson">
+        </div>
+        <div class="form-group">
+          <label>Payment Terms</label>
+          <input type="text" id="paymentTerms" name="paymentTerms">
+        </div>
+      </div>
+
+      <h3>Items</h3>
+      <table id="itemsTable">
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Quantity</th>
+            <th>Unit Price (Kshs)</th>
+            <th>Line Total (Kshs)</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="itemsBody"></tbody>
+      </table>
+      <button type="button" class="btn btn-add" onclick="addItem()">+ Add Item</button>
+
+      <div class="total-section">
+        Total Amount: Kshs <span id="totalAmount">0.00</span>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn btn-save" onclick="saveQuotation()">Save Quotation</button>
+        <button type="button" class="btn btn-export" onclick="exportPDF()">Export PDF</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    let items = [];
+
+    // Load next quotation number
+    fetch('/api/next-quotation-number')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('quoteNumber').value = data.quoteNumber;
+      });
+
+    function addItem() {
+      const idx = items.length;
+      items.push({ description: '', quantity: '', unitPrice: '', lineTotal: '' });
+      renderItems();
+    }
+
+    function removeItem(idx) {
+      items.splice(idx, 1);
+      renderItems();
+      updateTotal();
+    }
+
+    function renderItems() {
+      const tbody = document.getElementById('itemsBody');
+      tbody.innerHTML = '';
+      items.forEach((item, idx) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td><input class="item-input" type="text" value="${item.description}" onchange="updateItem(${idx}, 'description', this.value)"></td>
+          <td><input class="item-input" type="number" value="${item.quantity}" onchange="updateItem(${idx}, 'quantity', this.value)"></td>
+          <td><input class="item-input" type="number" value="${item.unitPrice}" onchange="updateItem(${idx}, 'unitPrice', this.value)"></td>
+          <td><input class="item-input" type="number" value="${item.lineTotal}" readonly></td>
+          <td><button type="button" class="btn btn-remove" onclick="removeItem(${idx})">Remove</button></td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    function updateItem(idx, field, value) {
+      items[idx][field] = value;
+      if (field === 'quantity' || field === 'unitPrice') {
+        const qty = parseFloat(items[idx].quantity) || 0;
+        const price = parseFloat(items[idx].unitPrice) || 0;
+        items[idx].lineTotal = (qty * price).toFixed(2);
+        renderItems();
+      }
+      updateTotal();
+    }
+
+    function updateTotal() {
+      const total = items.reduce((sum, item) => sum + (parseFloat(item.lineTotal) || 0), 0);
+      document.getElementById('totalAmount').textContent = total.toFixed(2);
+    }
+
+    function getFormData() {
+      return {
+        quoteNumber: document.getElementById('quoteNumber').value,
+        customerName: document.getElementById('customerName').value,
+        address: document.getElementById('address').value,
+        salesperson: document.getElementById('salesperson').value,
+        paymentTerms: document.getElementById('paymentTerms').value,
+        dueDate: document.getElementById('dueDate').value,
+        items: items,
+        totalAmount: document.getElementById('totalAmount').textContent
+      };
+    }
+
+    function saveQuotation() {
+      const data = getFormData();
+      if (!data.customerName) { alert('Please enter customer name'); return; }
+      fetch('/api/save-quotation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(r => {
+        if (r.ok) window.location.href = '/success';
+        else alert('Failed to save quotation');
+      });
+    }
+
+    function exportPDF() {
+      const data = getFormData();
+      if (!data.customerName) { alert('Please enter customer name'); return; }
+      fetch('/api/export-quotation-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(r => {
+        if (r.ok) return r.blob();
+        throw new Error('Failed to export PDF');
+      }).then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `quotation_${getFormData().quoteNumber}.pdf`;
+        a.click();
+      }).catch(err => alert(err.message));
+    }
+
+    // Add first item by default
+    addItem();
+  </script>
+</body>
+</html>
