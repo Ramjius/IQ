@@ -701,33 +701,55 @@ app.get('/error', (req, res) => {
 
 // Save Quotation
 app.post('/api/save-quotation', (req, res) => {
-  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount } = req.body;
-  const query = `
-    INSERT INTO quotations (date, quote_number, customer_name, address, salesperson, payment_terms, due_date, items, total_amount)
-    VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-  connection.query(query, [quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount], (err, result) => {
-    if (err) {
-      console.error('Database Error:', err);
-      return res.redirect('/error');
-    }
-    res.redirect('/success');
+  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  
+  // First, upsert client
+  const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
+  connection.query(upsertClient, [customerName, address], (clientErr) => {
+    if (clientErr) console.error('Error upserting client:', clientErr);
+    
+    const query = `
+      INSERT INTO quotations (date, quote_number, customer_name, address, salesperson, payment_terms, due_date, items, total_amount, payment_details)
+      VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    connection.query(query, [quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails], (err, result) => {
+      if (err) {
+        console.error('Database Error:', err);
+        return res.redirect('/error');
+      }
+      res.redirect('/success');
+    });
   });
 });
 
 // Save Invoice
 app.post('/api/save-invoice', (req, res) => {
   const { invoiceNumber, customerName, address, items, totalAmount, paymentDetails, status } = req.body;
-  const query = `
-    INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_details, status)
-    VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)
-  `;
-  connection.query(query, [invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending'], (err, result) => {
-    if (err) {
-      console.error('Database Error:', err);
-      return res.status(500).send('Failed to save invoice');
-    }
-    res.send('Invoice saved successfully!');
+  
+  // First, upsert client
+  const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
+  connection.query(upsertClient, [customerName, address], (clientErr) => {
+    if (clientErr) console.error('Error upserting client:', clientErr);
+
+    const query = `
+      INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_details, status)
+      VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)
+    `;
+    connection.query(query, [invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending'], (err, result) => {
+      if (err) {
+        console.error('Database Error:', err);
+        return res.status(500).send('Failed to save invoice');
+      }
+      res.send('Invoice saved successfully!');
+    });
+  });
+});
+
+// Get Clients
+app.get('/api/clients', (req, res) => {
+  connection.query('SELECT name, address FROM clients ORDER BY name ASC', (err, results) => {
+    if (err) return res.status(500).send('Failed to fetch clients');
+    res.json(results);
   });
 });
 
@@ -747,7 +769,7 @@ app.get('/api/dashboard', (req, res) => {
 
 // Export Quotation as PDF - FIXED VERSION
 app.post('/api/export-quotation-pdf', (req, res) => {
-  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount } = req.body;
+  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
   const fileName = `quotation_${quoteNumber}.pdf`;
   const filePath = path.join(__dirname, fileName);
 
@@ -868,8 +890,15 @@ app.post('/api/export-quotation-pdf', (req, res) => {
   }
   doc.fontSize(14).text(`Total Amount: Kshs ${totalAmount}`, 50, y + 20);
 
-  // Additional Quotation Text
+  // Payment Details
   y += 40;
+  doc.fontSize(12).text('Payment Details:', 50, y);
+  y += 20;
+  doc.text(paymentDetails || 'CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
+  y += 20;
+
+  // Additional Quotation Text
+  y += 20;
   if (y > 700) {
     doc.addPage();
     y = 50;
@@ -936,7 +965,7 @@ app.post('/api/export-quotation-pdf', (req, res) => {
 
 // Export Invoice as PDF - FIXED VERSION
 app.post('/api/export-invoice-pdf', (req, res) => {
-  const { invoiceNumber, customerName, address, items, totalAmount, status } = req.body;
+  const { invoiceNumber, customerName, address, items, totalAmount, status, paymentDetails } = req.body;
   const fileName = `${invoiceNumber}-${customerName}.pdf`;
   const filePath = path.join(__dirname, fileName);
 
@@ -1057,7 +1086,7 @@ app.post('/api/export-invoice-pdf', (req, res) => {
   y += 60;
   doc.fontSize(12).text('Payment Details:', 50, y);
   y += 20;
-  doc.text('CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
+  doc.text(paymentDetails || 'CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
   y += 20;
   doc.text('We trust that we have addressed your requirements favorably and look forward to a continued healthy business relationship.', 50, y, { width: 500 });
   y += 40;
@@ -1239,12 +1268,12 @@ app.get('/api/reprint-invoice/:invoiceNumber', (req, res) => {
     // Total Amount
     doc.fontSize(14).text(`Total Amount: Kshs ${invoice.total_amount}`, 50, y + 20);
 
-    // Payment Details and Closing Text with Signature Image
-    y += 80; // Additional space before payment details
-    doc.fontSize(12).text('Payment Details:', 50, y);
-    y += 20;
-    doc.text('CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
-    y += 20;
+  // Payment Details and Closing Text with Signature Image
+  y += 80; // Additional space before payment details
+  doc.fontSize(12).text('Payment Details:', 50, y);
+  y += 20;
+  doc.text(invoice.payment_details || 'CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
+  y += 20;
     doc.text('We trust that we have addressed your requirements favorably and look forward to a continued healthy business relationship.', 50, y, { width: 500 });
     y += 40;
     doc.text('Yours Faithfully', 50, y);
@@ -1303,14 +1332,10 @@ app.get('/api/reprint-quotation/:quoteNumber', (req, res) => {
         items = JSON.parse(quotation.items);
       } catch (parseErr) {
         console.error(`Error parsing items for quote ${quoteNumber}:`, parseErr);
-        console.error('Raw items data:', quotation.items);
         items = [];
       }
     } else if (Array.isArray(quotation.items)) {
       items = quotation.items;
-    } else {
-      console.error('Unexpected items format for quote', quoteNumber, ':', quotation.items);
-      items = [];
     }
 
     const fileName = `quotation_${quoteNumber}.pdf`;
@@ -1425,8 +1450,15 @@ app.get('/api/reprint-quotation/:quoteNumber', (req, res) => {
     }
     doc.fontSize(14).text(`Total Amount: Kshs ${quotation.total_amount}`, 50, y + 20);
 
-    // Additional Quotation Text
+    // Payment Details
     y += 40;
+    doc.fontSize(12).text('Payment Details:', 50, y);
+    y += 20;
+    doc.text(quotation.payment_details || 'CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
+    y += 20;
+
+    // Additional Quotation Text
+    y += 20;
     if (y > 700) {
       doc.addPage();
       y = 50;
