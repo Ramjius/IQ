@@ -380,9 +380,26 @@ app.get('/', (req, res) => {
         <div class="buttons-section">
           <button onclick="window.location.href='/invoices'">Invoices</button>
           <button onclick="window.location.href='/quotations'">Quotes</button>
+          <button onclick="importData('invoices')" style="background-color: #007bff;">Import Invoices</button>
+          <button onclick="importData('quotations')" style="background-color: #007bff;">Import Quotes</button>
         </div>
       </div>
       <script>
+        function importData(type) {
+          if (!confirm("Import JSON files from uploads/" + type + "?")) return;
+          fetch('/api/import-from-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: type })
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            alert(data.message + ": " + data.importedCount + " imported, " + data.skippedCount + " skipped (duplicates).");
+            location.reload();
+          })
+          .catch(function(err) { alert('Error importing: ' + err.message); });
+        }
+
         // Pagination and sorting state
         let invoices = [];
         let quotations = [];
@@ -765,6 +782,87 @@ app.get('/api/dashboard', (req, res) => {
       res.json({ quotations, invoices });
     });
   });
+});
+
+// Import from directory
+app.post('/api/import-from-directory', async (req, res) => {
+  const { type } = req.body; // 'invoices' or 'quotations'
+  const uploadDir = path.join(__dirname, 'uploads', type);
+  
+  if (!fs.existsSync(uploadDir)) {
+    return res.status(404).json({ message: `Directory uploads/${type} not found` });
+  }
+
+  const files = fs.readdirSync(uploadDir).filter(f => f.endsWith('.json'));
+  let importedCount = 0;
+  let skippedCount = 0;
+
+  for (const file of files) {
+    try {
+      const filePath = path.join(uploadDir, file);
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      
+      if (type === 'invoices') {
+        const { invoiceNumber, customerName, address, items, totalAmount, paymentDetails, status, date } = data;
+        
+        // Upsert client
+        await new Promise((resolve) => {
+          const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
+          connection.query(upsertClient, [customerName, address], () => resolve());
+        });
+
+        // Insert invoice if not exists
+        const exists = await new Promise((resolve) => {
+          connection.query('SELECT 1 FROM invoices WHERE invoice_number = ?', [invoiceNumber], (err, rows) => {
+            resolve(rows && rows.length > 0);
+          });
+        });
+
+        if (!exists) {
+          await new Promise((resolve) => {
+            const query = `INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_details, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+            connection.query(query, [date || new Date(), invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending'], () => {
+              importedCount++;
+              resolve();
+            });
+          });
+        } else {
+          skippedCount++;
+        }
+      } else if (type === 'quotations') {
+        const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails, date } = data;
+
+        // Upsert client
+        await new Promise((resolve) => {
+          const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
+          connection.query(upsertClient, [customerName, address], () => resolve());
+        });
+
+        // Insert quotation if not exists
+        const exists = await new Promise((resolve) => {
+          connection.query('SELECT 1 FROM quotations WHERE quote_number = ?', [quoteNumber], (err, rows) => {
+            resolve(rows && rows.length > 0);
+          });
+        });
+
+        if (!exists) {
+          await new Promise((resolve) => {
+            const query = `INSERT INTO quotations (date, quote_number, customer_name, address, salesperson, payment_terms, due_date, items, total_amount, payment_details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            connection.query(query, [date || new Date(), quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails], () => {
+              importedCount++;
+              resolve();
+            });
+          });
+        } else {
+          skippedCount++;
+        }
+      }
+    } catch (err) {
+      console.error(`Error processing file ${file}:`, err);
+    }
+  }
+
+  res.json({ message: 'Import completed', importedCount, skippedCount });
 });
 
 // Export Quotation as PDF - FIXED VERSION
