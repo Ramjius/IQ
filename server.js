@@ -487,7 +487,10 @@ app.get('/', (req, res) => {
                 <td>\${i.customer_name}</td>
                 <td>Kshs \${i.total_amount}</td>
                 <td><span class="status \${i.status || 'pending'}">\${capitalizeFirstLetter(i.status || 'pending')}</span></td>
-                <td><button onclick="reprintInvoice('\${i.invoice_number}')">Reprint</button></td>
+                <td style="white-space: nowrap;">
+                  <button onclick="reprintInvoice('\${i.invoice_number}')">Reprint</button>
+                  <button onclick="editInvoice('\${i.invoice_number}')" style="background-color:#ff9800; margin-left:4px;">Edit</button>
+                </td>
               \`;
               tbody.appendChild(row);
             });
@@ -520,7 +523,10 @@ app.get('/', (req, res) => {
                 <td>\${q.quote_number}</td>
                 <td>\${q.customer_name}</td>
                 <td>Kshs \${q.total_amount}</td>
-                <td><button onclick="reprintQuotation('\${q.quote_number}')">Reprint</button></td>
+                <td style="white-space: nowrap;">
+                  <button onclick="reprintQuotation('\${q.quote_number}')">Reprint</button>
+                  <button onclick="editQuotation('\${q.quote_number}')" style="background-color:#ff9800; margin-left:4px;">Edit</button>
+                </td>
               \`;
               tbody.appendChild(row);
             });
@@ -539,6 +545,15 @@ app.get('/', (req, res) => {
 
         function reprintQuotation(quoteNumber) {
           window.location.href = \`/api/reprint-quotation/\${quoteNumber}\`;
+        }
+
+        // Edit functions
+        function editInvoice(invoiceNumber) {
+          window.location.href = \`/invoices?edit=\${encodeURIComponent(invoiceNumber)}\`;
+        }
+
+        function editQuotation(quoteNumber) {
+          window.location.href = \`/quotations?edit=\${encodeURIComponent(quoteNumber)}\`;
         }
 
         // Event listeners
@@ -767,6 +782,60 @@ app.get('/api/clients', (req, res) => {
   connection.query('SELECT name, address FROM clients ORDER BY name ASC', (err, results) => {
     if (err) return res.status(500).send('Failed to fetch clients');
     res.json(results);
+  });
+});
+
+// Get single invoice for editing
+app.get('/api/invoice/:invoiceNumber', (req, res) => {
+  connection.query('SELECT * FROM invoices WHERE invoice_number = ?', [req.params.invoiceNumber], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Failed to fetch invoice' });
+    if (!results.length) return res.status(404).json({ error: 'Invoice not found' });
+    const inv = results[0];
+    if (typeof inv.items === 'string') {
+      try { inv.items = JSON.parse(inv.items); } catch (e) { inv.items = []; }
+    }
+    res.json(inv);
+  });
+});
+
+// Get single quotation for editing
+app.get('/api/quotation/:quoteNumber', (req, res) => {
+  connection.query('SELECT * FROM quotations WHERE quote_number = ?', [req.params.quoteNumber], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Failed to fetch quotation' });
+    if (!results.length) return res.status(404).json({ error: 'Quotation not found' });
+    const q = results[0];
+    if (typeof q.items === 'string') {
+      try { q.items = JSON.parse(q.items); } catch (e) { q.items = []; }
+    }
+    res.json(q);
+  });
+});
+
+// Update invoice
+app.put('/api/update-invoice', (req, res) => {
+  const { invoiceNumber, customerName, address, items, totalAmount, paymentDetails, status } = req.body;
+  const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
+  connection.query(upsertClient, [customerName, address], (clientErr) => {
+    if (clientErr) console.error('Error upserting client:', clientErr);
+    const query = `UPDATE invoices SET customer_name = ?, address = ?, items = ?, total_amount = ?, payment_details = ?, status = ? WHERE invoice_number = ?`;
+    connection.query(query, [customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending', invoiceNumber], (err) => {
+      if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update invoice' }); }
+      res.json({ success: true });
+    });
+  });
+});
+
+// Update quotation
+app.put('/api/update-quotation', (req, res) => {
+  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
+  connection.query(upsertClient, [customerName, address], (clientErr) => {
+    if (clientErr) console.error('Error upserting client:', clientErr);
+    const query = `UPDATE quotations SET customer_name = ?, address = ?, salesperson = ?, payment_terms = ?, due_date = ?, items = ?, total_amount = ?, payment_details = ? WHERE quote_number = ?`;
+    connection.query(query, [customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails, quoteNumber], (err) => {
+      if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update quotation' }); }
+      res.json({ success: true });
+    });
   });
 });
 

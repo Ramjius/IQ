@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Invoicing App - New Invoice</title>
+  <title>Invoicing App - Invoice</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
     header { display: flex; justify-content: space-between; align-items: center; padding: 20px; background-color: #ffffff; color: black; }
@@ -18,23 +18,35 @@
     .form-group label { display: block; font-weight: bold; margin-bottom: 5px; }
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
     .form-row { display: flex; gap: 15px; }
-    .form-row .form-group { flex: 1; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
-    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background-color: #f5f5f5; }
-    .item-input { width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
+    .form-row .form-group { flex: 1; min-width: 0; }
+    .table-wrapper { width: 100%; overflow-x: auto; margin-bottom: 15px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid #ddd; overflow: hidden; }
+    th { background-color: #f5f5f5; font-size: 13px; }
+    col.col-desc { width: 40%; }
+    col.col-qty  { width: 12%; }
+    col.col-price { width: 18%; }
+    col.col-total { width: 18%; }
+    col.col-action { width: 12%; }
+    .item-input { width: 100%; padding: 5px; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; font-size: 13px; }
     .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
     .btn-add { background-color: #4caf50; color: white; margin-bottom: 10px; }
-    .btn-remove { background-color: #f44336; color: white; padding: 5px 10px; }
+    .btn-remove { background-color: #f44336; color: white; padding: 5px 8px; font-size: 12px; }
     .btn-save { background-color: #2196f3; color: white; margin-right: 10px; }
+    .btn-update { background-color: #ff9800; color: white; margin-right: 10px; }
     .btn-export { background-color: #e91e63; color: white; }
     .total-section { text-align: right; font-size: 18px; font-weight: bold; margin: 15px 0; }
     .actions { margin-top: 20px; }
+    .edit-badge { background: #ff9800; color: white; padding: 4px 12px; border-radius: 20px; font-size: 13px; margin-left: 12px; vertical-align: middle; }
+    #clientModal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+    .modal-box { background: white; width: 420px; margin: 80px auto; padding: 24px; border-radius: 8px; }
+    .client-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+    .client-item:hover { background: #f5f5f5; }
   </style>
 </head>
 <body>
   <header>
-    <h1>New Invoice</h1>
+    <h1 id="pageTitle">New Invoice</h1>
     <img src="/logo.png" alt="Company Logo">
   </header>
   <div class="nav-menu">
@@ -62,8 +74,8 @@
         <div class="form-group">
           <label>Customer Name</label>
           <div style="display: flex; gap: 5px;">
-            <input type="text" id="customerName" name="customerName" required>
-            <button type="button" class="btn btn-save" style="width: auto; padding: 5px 10px;" onclick="showClientPicker()">Load</button>
+            <input type="text" id="customerName" name="customerName" required style="flex:1; min-width:0;">
+            <button type="button" class="btn btn-save" style="flex-shrink:0; padding:6px 12px;" onclick="showClientPicker()">Load</button>
           </div>
         </div>
         <div class="form-group">
@@ -71,12 +83,12 @@
           <input type="text" id="address" name="address">
         </div>
       </div>
-      
+
       <!-- Client Picker Modal -->
-      <div id="clientModal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5);">
-        <div style="background: white; width: 400px; margin: 100px auto; padding: 20px; border-radius: 8px;">
-          <h3>Select Client</h3>
-          <div id="clientList" style="max-height: 300px; overflow-y: auto; margin-bottom: 20px;"></div>
+      <div id="clientModal">
+        <div class="modal-box">
+          <h3 style="margin-top:0;">Select Client</h3>
+          <div id="clientList" style="max-height: 300px; overflow-y: auto; margin-bottom: 16px; border: 1px solid #eee; border-radius: 4px;"></div>
           <button type="button" class="btn btn-remove" onclick="document.getElementById('clientModal').style.display='none'">Close</button>
         </div>
       </div>
@@ -87,43 +99,87 @@
       </div>
 
       <h3>Items</h3>
-      <table id="itemsTable">
-        <thead>
-          <tr>
-            <th>Description</th>
-            <th>Quantity</th>
-            <th>Unit Price (Kshs)</th>
-            <th>Line Total (Kshs)</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="itemsBody"></tbody>
-      </table>
+      <div class="table-wrapper">
+        <table id="itemsTable">
+          <colgroup>
+            <col class="col-desc">
+            <col class="col-qty">
+            <col class="col-price">
+            <col class="col-total">
+            <col class="col-action">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Unit Price (Kshs)</th>
+              <th>Line Total (Kshs)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="itemsBody"></tbody>
+        </table>
+      </div>
       <button type="button" class="btn btn-add" onclick="addItem()">+ Add Item</button>
 
       <div class="total-section">
         Total Amount: Kshs <span id="totalAmount">0.00</span>
       </div>
 
-      <div class="actions">
-        <button type="button" class="btn btn-save" onclick="saveInvoice()">Save Invoice</button>
-        <button type="button" class="btn btn-export" onclick="exportPDF()">Export PDF</button>
-      </div>
+      <div class="actions" id="actionButtons"></div>
     </form>
   </div>
 
   <script>
     let items = [];
+    let editMode = false;
 
-    // Load next invoice number
-    fetch('/api/next-invoice-number')
-      .then(r => r.json())
-      .then(data => {
-        document.getElementById('invoiceNumber').value = data.invoiceNumber;
-      });
+    // Detect edit mode from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const editNumber = urlParams.get('edit');
+
+    if (editNumber) {
+      editMode = true;
+      document.getElementById('pageTitle').innerHTML = 'Edit Invoice <span class="edit-badge">Editing</span>';
+      loadInvoiceForEdit(editNumber);
+      renderActionButtons();
+    } else {
+      fetch('/api/next-invoice-number')
+        .then(r => r.json())
+        .then(data => { document.getElementById('invoiceNumber').value = data.invoiceNumber; });
+      addItem();
+      renderActionButtons();
+    }
+
+    function loadInvoiceForEdit(invoiceNumber) {
+      fetch('/api/invoice/' + encodeURIComponent(invoiceNumber))
+        .then(r => r.json())
+        .then(inv => {
+          document.getElementById('invoiceNumber').value = inv.invoice_number;
+          document.getElementById('customerName').value = inv.customer_name || '';
+          document.getElementById('address').value = inv.address || '';
+          document.getElementById('paymentDetails').value = inv.payment_details || 'CHEQUE NAME: RAMTECHNOLOGIES';
+          const statusEl = document.getElementById('status');
+          for (let i = 0; i < statusEl.options.length; i++) {
+            if (statusEl.options[i].value === inv.status) { statusEl.selectedIndex = i; break; }
+          }
+          items = Array.isArray(inv.items) ? inv.items : [];
+          renderItems();
+          updateTotal();
+        })
+        .catch(err => { alert('Failed to load invoice: ' + err.message); });
+    }
+
+    function renderActionButtons() {
+      const container = document.getElementById('actionButtons');
+      if (editMode) {
+        container.innerHTML = '<button type="button" class="btn btn-update" onclick="updateInvoice()">Update Invoice</button><button type="button" class="btn btn-export" onclick="exportPDF()">Export PDF</button>';
+      } else {
+        container.innerHTML = '<button type="button" class="btn btn-save" onclick="saveInvoice()">Save Invoice</button><button type="button" class="btn btn-export" onclick="exportPDF()">Export PDF</button>';
+      }
+    }
 
     function addItem() {
-      const idx = items.length;
       items.push({ description: '', quantity: '', unitPrice: '', lineTotal: '' });
       renderItems();
     }
@@ -139,16 +195,17 @@
       tbody.innerHTML = '';
       items.forEach((item, idx) => {
         const row = document.createElement('tr');
-        row.innerHTML = `
-          <td><input class="item-input" type="text" value="${item.description}" onchange="updateItem(${idx}, 'description', this.value)"></td>
-          <td><input class="item-input" type="number" value="${item.quantity}" onchange="updateItem(${idx}, 'quantity', this.value)"></td>
-          <td><input class="item-input" type="number" value="${item.unitPrice}" onchange="updateItem(${idx}, 'unitPrice', this.value)"></td>
-          <td><input class="item-input" type="number" value="${item.lineTotal}" readonly></td>
-          <td><button type="button" class="btn btn-remove" onclick="removeItem(${idx})">Remove</button></td>
-        `;
+        row.innerHTML =
+          '<td><input class="item-input" type="text" value="' + escVal(item.description) + '" onchange="updateItem(' + idx + ', \'description\', this.value)"></td>' +
+          '<td><input class="item-input" type="number" min="0" value="' + escVal(item.quantity) + '" onchange="updateItem(' + idx + ', \'quantity\', this.value)"></td>' +
+          '<td><input class="item-input" type="number" min="0" value="' + escVal(item.unitPrice) + '" onchange="updateItem(' + idx + ', \'unitPrice\', this.value)"></td>' +
+          '<td><input class="item-input" type="number" value="' + escVal(item.lineTotal) + '" readonly></td>' +
+          '<td><button type="button" class="btn btn-remove" onclick="removeItem(' + idx + ')">&#x2715;</button></td>';
         tbody.appendChild(row);
       });
     }
+
+    function escVal(v) { return (v || '').toString().replace(/"/g, '&quot;'); }
 
     function updateItem(idx, field, value) {
       items[idx][field] = value;
@@ -185,15 +242,13 @@
           const list = document.getElementById('clientList');
           list.innerHTML = '';
           if (clients.length === 0) {
-            list.innerHTML = '<p>No clients found</p>';
+            list.innerHTML = '<p style="padding:10px;">No clients found</p>';
           } else {
             clients.forEach(c => {
               const div = document.createElement('div');
-              div.style.padding = '10px';
-              div.style.borderBottom = '1px solid #eee';
-              div.style.cursor = 'pointer';
-              div.innerHTML = `<strong>${c.name}</strong><br><small>${c.address || ''}</small>`;
-              div.onclick = () => {
+              div.className = 'client-item';
+              div.innerHTML = '<strong>' + c.name + '</strong><br><small>' + (c.address || '') + '</small>';
+              div.onclick = function() {
                 document.getElementById('customerName').value = c.name;
                 document.getElementById('address').value = c.address || '';
                 document.getElementById('clientModal').style.display = 'none';
@@ -213,9 +268,22 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       }).then(r => {
-        if (r.ok) window.location.href = '/success';
+        if (r.ok) window.location.href = '/';
         else alert('Failed to save invoice');
       });
+    }
+
+    function updateInvoice() {
+      const data = getFormData();
+      if (!data.customerName) { alert('Please enter customer name'); return; }
+      fetch('/api/update-invoice', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(r => r.json()).then(result => {
+        if (result.success) { alert('Invoice updated successfully!'); window.location.href = '/'; }
+        else alert('Failed to update invoice: ' + (result.error || ''));
+      }).catch(err => alert('Error: ' + err.message));
     }
 
     function exportPDF() {
@@ -232,13 +300,10 @@
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${data.invoiceNumber}-${data.customerName}.pdf`;
+        a.download = data.invoiceNumber + '-' + data.customerName + '.pdf';
         a.click();
       }).catch(err => alert(err.message));
     }
-
-    // Add first item by default
-    addItem();
   </script>
 </body>
 </html>
