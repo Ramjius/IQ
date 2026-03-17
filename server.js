@@ -5,12 +5,51 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+const multer = require('multer');
 require('dotenv').config();
 
 const app = express();
 app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cors());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'invoicing-app-secret-2025',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+}));
 app.use(express.static(path.join(__dirname, 'public'))); // serve static files
+
+// Multer setup for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, path.join(__dirname, 'public')),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const name = file.fieldname === 'logo' ? 'logo' : 'signature';
+    cb(null, name + ext);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+
+// Auth middleware
+function requireAuth(req, res, next) {
+  if (req.session && req.session.userId) return next();
+  res.redirect('/admin/login');
+}
+
+// Settings helper — fetch all settings as an object
+async function getSettings() {
+  return new Promise((resolve, reject) => {
+    connection.query('SELECT key, value FROM app_settings', (err, rows) => {
+      if (err) return reject(err);
+      const s = {};
+      (rows || []).forEach(r => { s[r.key] = r.value; });
+      resolve(s);
+    });
+  });
+}
 
 // PostgreSQL connection setup
 const pool = new Pool({
@@ -293,6 +332,7 @@ app.get('/', (req, res) => {
         <a href="/" class="active">Dashboard</a>
         <a href="/invoices">Invoices</a>
         <a href="/quotations">Quotations</a>
+        <a href="/admin" style="margin-left:auto;background:#424242;padding:5px 14px;border-radius:4px;">&#9881; Admin</a>
       </div>
       <div class="container">
         <div class="tables-section">
@@ -1684,65 +1724,287 @@ app.get('/api/reprint-quotation/:quoteNumber', (req, res) => {
   });
 });
 
-// Get the next available invoice number
-app.get('/api/next-invoice-number', (req, res) => {
-  const currentYear = new Date().getFullYear().toString(); // e.g., "2025"
-  const query = `
-    SELECT invoice_number 
-    FROM invoices 
-    WHERE invoice_number LIKE ? 
-    ORDER BY invoice_number DESC 
-    LIMIT 1
-  `;
-  const searchPattern = `${currentYear}%`; // e.g., "2025%"
+// ─── SETTINGS-AWARE INVOICE NUMBER GENERATION ───────────────────────────────
 
-  connection.query(query, [searchPattern], (err, results) => {
-    if (err) {
-      console.error('Error fetching invoice numbers:', err);
-      return res.status(500).json({ error: 'Failed to fetch invoice number' });
+app.get('/api/next-invoice-number', async (req, res) => {
+  try {
+    const s = await getSettings();
+    const prefix = s.invoice_prefix || '';
+    const suffix = s.invoice_suffix || '';
+    const padding = parseInt(s.invoice_number_padding) || 2;
+    const useYear = s.invoice_number_use_year !== 'false';
+    const currentYear = new Date().getFullYear().toString();
+    const yearPart = useYear ? currentYear : '';
+
+    // Pattern to search existing numbers
+    const searchPattern = `${prefix}${yearPart}%`;
+    connection.query(
+      'SELECT invoice_number FROM invoices WHERE invoice_number LIKE ? ORDER BY id DESC LIMIT 1',
+      [searchPattern],
+      (err, results) => {
+        if (err) return res.status(500).json({ error: 'DB error' });
+        let seq = parseInt(s.invoice_start_number) || 1;
+        if (results.length > 0) {
+          // Strip prefix, year, suffix; parse remaining integer
+          let raw = results[0].invoice_number;
+          raw = raw.replace(prefix, '').replace(suffix, '');
+          if (useYear) raw = raw.replace(currentYear, '');
+          const parsed = parseInt(raw);
+          if (!isNaN(parsed)) seq = parsed + 1;
+        }
+        const seqStr = seq.toString().padStart(padding, '0');
+        res.json({ invoiceNumber: `${prefix}${yearPart}${seqStr}${suffix}` });
+      }
+    );
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/next-quotation-number', async (req, res) => {
+  try {
+    const s = await getSettings();
+    const prefix = s.quotation_prefix || '';
+    const suffix = s.quotation_suffix || '';
+    const padding = parseInt(s.quotation_number_padding) || 2;
+    const useYear = s.quotation_number_use_year !== 'false';
+    const currentYear = new Date().getFullYear().toString();
+    const yearPart = useYear ? currentYear : '';
+
+    const searchPattern = `${prefix}${yearPart}%`;
+    connection.query(
+      'SELECT quote_number FROM quotations WHERE quote_number LIKE ? ORDER BY id DESC LIMIT 1',
+      [searchPattern],
+      (err, results) => {
+        if (err) return res.status(500).json({ error: 'DB error' });
+        let seq = parseInt(s.quotation_start_number) || 1;
+        if (results.length > 0) {
+          let raw = results[0].quote_number;
+          raw = raw.replace(prefix, '').replace(suffix, '');
+          if (useYear) raw = raw.replace(currentYear, '');
+          const parsed = parseInt(raw);
+          if (!isNaN(parsed)) seq = parsed + 1;
+        }
+        const seqStr = seq.toString().padStart(padding, '0');
+        res.json({ quoteNumber: `${prefix}${yearPart}${seqStr}${suffix}` });
+      }
+    );
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── SETTINGS API ─────────────────────────────────────────────────────────────
+
+app.get('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const s = await getSettings();
+    res.json(s);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const updates = req.body; // { key: value, ... }
+    for (const [key, value] of Object.entries(updates)) {
+      await new Promise((resolve, reject) => {
+        connection.query(
+          'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = ?',
+          [key, value, value],
+          (err) => err ? reject(err) : resolve()
+        );
+      });
     }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-    let nextNumber = '01'; // Default to "01" if no invoices exist for the year
-    if (results.length > 0) {
-      const lastInvoiceNumber = results[0].invoice_number; // e.g., "202504"
-      const lastSequentialNumber = parseInt(lastInvoiceNumber.slice(-2)); // e.g., 04
-      nextNumber = (lastSequentialNumber + 1).toString().padStart(2, '0'); // e.g., "05"
-    }
+// Reset invoice sequence (update start number)
+app.post('/api/settings/reset-invoice-sequence', requireAuth, async (req, res) => {
+  try {
+    const { startNumber } = req.body;
+    await new Promise((resolve, reject) => {
+      connection.query(
+        'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = ?',
+        ['invoice_start_number', String(startNumber || 1), String(startNumber || 1)],
+        (err) => err ? reject(err) : resolve()
+      );
+    });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-    const nextInvoiceNumber = `${currentYear}${nextNumber}`; // e.g., "202505"
-    res.json({ invoiceNumber: nextInvoiceNumber });
+app.post('/api/settings/reset-quotation-sequence', requireAuth, async (req, res) => {
+  try {
+    const { startNumber } = req.body;
+    await new Promise((resolve, reject) => {
+      connection.query(
+        'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = ?',
+        ['quotation_start_number', String(startNumber || 1), String(startNumber || 1)],
+        (err) => err ? reject(err) : resolve()
+      );
+    });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── FILE UPLOAD ──────────────────────────────────────────────────────────────
+
+app.post('/api/upload-logo', requireAuth, upload.single('logo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  // Rename to logo.png regardless of original extension
+  const dest = path.join(__dirname, 'public', 'logo.png');
+  if (req.file.path !== dest) {
+    fs.renameSync(req.file.path, dest);
+  }
+  res.json({ success: true, filename: 'logo.png' });
+});
+
+app.post('/api/upload-signature', requireAuth, upload.single('signature'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const dest = path.join(__dirname, 'public', 'signature.png');
+  if (req.file.path !== dest) {
+    fs.renameSync(req.file.path, dest);
+  }
+  res.json({ success: true, filename: 'signature.png' });
+});
+
+// ─── AUTH ROUTES ──────────────────────────────────────────────────────────────
+
+// Check if any user exists
+app.get('/api/auth/has-users', (req, res) => {
+  connection.query('SELECT COUNT(*) as cnt FROM users', (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ hasUsers: parseInt(rows[0].cnt) > 0 });
   });
 });
 
-// Get the next available quotation number
-app.get('/api/next-quotation-number', (req, res) => {
-  const currentYear = new Date().getFullYear().toString(); // e.g., "2025"
-  const query = `
-    SELECT quote_number 
-    FROM quotations 
-    WHERE quote_number LIKE ? 
-    ORDER BY quote_number DESC 
-    LIMIT 1
-  `;
-  const searchPattern = `${currentYear}%`; // e.g., "2025%"
-
-  connection.query(query, [searchPattern], (err, results) => {
-    if (err) {
-      console.error('Error fetching quotation numbers:', err);
-      return res.status(500).json({ error: 'Failed to fetch quotation number' });
+// Sign up
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields are required' });
     }
-
-    let nextNumber = '01'; // Default to "01" if no quotations exist for the year
-    if (results.length > 0) {
-      const lastQuoteNumber = results[0].quote_number; // e.g., "202504"
-      const lastSequentialNumber = parseInt(lastQuoteNumber.slice(-2)); // e.g., 04
-      nextNumber = (lastSequentialNumber + 1).toString().padStart(2, '0'); // e.g., "05"
+    // Only allow first user signup freely; subsequent require login
+    const countResult = await new Promise((resolve, reject) => {
+      connection.query('SELECT COUNT(*) as cnt FROM users', (err, rows) => {
+        err ? reject(err) : resolve(rows);
+      });
+    });
+    const count = parseInt(countResult[0].cnt);
+    if (count > 0 && !(req.session && req.session.userId)) {
+      return res.status(403).json({ error: 'Only the first admin account can be created without login' });
     }
+    const hash = await bcrypt.hash(password, 12);
+    await new Promise((resolve, reject) => {
+      connection.query(
+        'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
+        [username, email, hash],
+        (err) => err ? reject(err) : resolve()
+      );
+    });
+    res.json({ success: true });
+  } catch (e) {
+    if (e.code === '23505') return res.status(400).json({ error: 'Username or email already exists' });
+    res.status(500).json({ error: e.message });
+  }
+});
 
-    const nextQuoteNumber = `${currentYear}${nextNumber}`; // e.g., "202505"
-    res.json({ quoteNumber: nextQuoteNumber });
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'All fields required' });
+    const rows = await new Promise((resolve, reject) => {
+      connection.query('SELECT * FROM users WHERE username = ? OR email = ?', [username, username], (err, r) => {
+        err ? reject(err) : resolve(r);
+      });
+    });
+    if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
+    const user = rows[0];
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy();
+  res.json({ success: true });
+});
+
+// List all users (admin only)
+app.get('/api/auth/users', requireAuth, (req, res) => {
+  connection.query('SELECT id, username, email, created_at FROM users ORDER BY id', (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
   });
 });
+
+// Change password
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  try {
+    const { currentPwd, newPwd } = req.body;
+    if (!currentPwd || !newPwd) return res.status(400).json({ error: 'Missing fields' });
+    const rows = await new Promise((resolve, reject) => {
+      connection.query('SELECT * FROM users WHERE id = ?', [req.session.userId], (err, r) => {
+        err ? reject(err) : resolve(r);
+      });
+    });
+    if (!rows.length) return res.status(404).json({ error: 'User not found' });
+    const match = await bcrypt.compare(currentPwd, rows[0].password_hash);
+    if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(newPwd, 12);
+    await new Promise((resolve, reject) => {
+      connection.query('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.session.userId], (err) => {
+        err ? reject(err) : resolve();
+      });
+    });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Check session
+app.get('/api/auth/me', (req, res) => {
+  if (req.session && req.session.userId) {
+    res.json({ loggedIn: true, username: req.session.username });
+  } else {
+    res.json({ loggedIn: false });
+  }
+});
+
+// ─── ADMIN PAGE ROUTES ────────────────────────────────────────────────────────
+
+app.get('/admin/login', (req, res) => {
+  if (req.session && req.session.userId) return res.redirect('/admin');
+  res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
+});
+
+app.get('/admin/signup', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-signup.html'));
+});
+
+app.get('/admin', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// ─── SERVER START ─────────────────────────────────────────────────────────────
 
 const PORT = 5000;
 app.listen(PORT, '0.0.0.0', () => {

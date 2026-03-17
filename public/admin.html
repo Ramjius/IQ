@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f0f2f5; color: #222; }
+    header { background: #212121; color: white; padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
+    .header-actions { display: flex; align-items: center; gap: 14px; }
+    .header-actions span { font-size: 14px; opacity: 0.85; }
+    .btn-logout { background: #e53935; color: white; border: none; padding: 7px 16px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+    .btn-back { background: #4caf50; color: white; border: none; padding: 7px 16px; border-radius: 5px; cursor: pointer; font-size: 13px; text-decoration: none; }
+    .layout { display: flex; min-height: calc(100vh - 60px); }
+    nav { width: 220px; background: #fff; border-right: 1px solid #e0e0e0; padding: 20px 0; flex-shrink: 0; }
+    nav a { display: block; padding: 11px 22px; color: #444; text-decoration: none; font-size: 14px; border-left: 3px solid transparent; transition: all 0.2s; }
+    nav a:hover { background: #f5f5f5; color: #212121; }
+    nav a.active { border-left-color: #212121; background: #f5f5f5; color: #212121; font-weight: bold; }
+    nav .nav-section { padding: 12px 22px 4px; font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
+    main { flex: 1; padding: 28px; }
+    .section { display: none; }
+    .section.active { display: block; }
+    .panel { background: white; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,0.08); padding: 28px; margin-bottom: 24px; }
+    .panel h2 { margin-top: 0; margin-bottom: 20px; font-size: 17px; color: #212121; border-bottom: 2px solid #f0f0f0; padding-bottom: 12px; }
+    .panel h3 { margin-top: 0; font-size: 15px; color: #444; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #555; }
+    .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #212121; }
+    .form-group .hint { font-size: 12px; color: #888; margin-top: 3px; }
+    .btn { padding: 9px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: bold; }
+    .btn-primary { background: #212121; color: white; }
+    .btn-primary:hover { background: #424242; }
+    .btn-danger { background: #e53935; color: white; }
+    .btn-danger:hover { background: #c62828; }
+    .btn-warning { background: #ff9800; color: white; }
+    .btn-warning:hover { background: #f57c00; }
+    .btn-success { background: #4caf50; color: white; }
+    .btn-success:hover { background: #43a047; }
+    .toast { position: fixed; bottom: 30px; right: 30px; padding: 12px 22px; border-radius: 6px; color: white; font-size: 14px; z-index: 9999; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+    .toast.success { background: #43a047; }
+    .toast.error { background: #e53935; }
+    .preview-img { max-height: 80px; border: 1px solid #ddd; border-radius: 5px; margin-top: 8px; display: block; }
+    .number-preview { background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 5px; padding: 10px 16px; font-size: 15px; font-weight: bold; color: #2e7d32; display: inline-block; margin-top: 8px; }
+    .reset-box { background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 8px; padding: 18px; margin-top: 16px; }
+    .reset-box p { margin: 0 0 12px; font-size: 13px; color: #5d4037; }
+    .reset-row { display: flex; gap: 10px; align-items: center; }
+    .reset-row input { width: 120px; flex-shrink: 0; }
+    .user-table { width: 100%; border-collapse: collapse; }
+    .user-table th, .user-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
+    .user-table th { background: #f5f5f5; font-weight: bold; }
+    .toggle-switch { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .toggle-switch label { font-weight: bold; font-size: 13px; color: #555; }
+    .toggle { position: relative; display: inline-block; width: 42px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; inset: 0; background: #ccc; border-radius: 24px; transition: 0.3s; }
+    .slider:before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+    input:checked + .slider { background: #4caf50; }
+    input:checked + .slider:before { transform: translateX(18px); }
+    @media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } .layout { flex-direction: column; } nav { width: 100%; border-right: none; border-bottom: 1px solid #e0e0e0; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>&#9881; Admin Panel</h1>
+    <div class="header-actions">
+      <span id="welcomeMsg">Welcome</span>
+      <a href="/" class="btn-back">&#8592; App</a>
+      <button class="btn-logout" onclick="logout()">Log Out</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav>
+      <div class="nav-section">General</div>
+      <a href="#" class="active" data-section="company" onclick="showSection('company',this)">&#127970; Company Info</a>
+      <a href="#" data-section="branding" onclick="showSection('branding',this)">&#127912; Logo &amp; Signature</a>
+      <div class="nav-section">Numbering</div>
+      <a href="#" data-section="invoices" onclick="showSection('invoices',this)">&#128203; Invoice Numbers</a>
+      <a href="#" data-section="quotations" onclick="showSection('quotations',this)">&#128196; Quotation Numbers</a>
+      <div class="nav-section">Defaults</div>
+      <a href="#" data-section="pdf" onclick="showSection('pdf',this)">&#128196; PDF &amp; Content</a>
+      <div class="nav-section">Security</div>
+      <a href="#" data-section="users" onclick="showSection('users',this)">&#128100; Users</a>
+    </nav>
+
+    <main>
+      <!-- Company Info -->
+      <div class="section active" id="section-company">
+        <div class="panel">
+          <h2>Company Information</h2>
+          <p style="font-size:13px;color:#666;margin-top:-10px;margin-bottom:16px;">This information appears in your invoice and quotation PDFs.</p>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Company Name</label>
+              <input type="text" id="company_name">
+            </div>
+            <div class="form-group">
+              <label>Email Address</label>
+              <input type="email" id="company_email">
+            </div>
+            <div class="form-group">
+              <label>Phone Number</label>
+              <input type="text" id="company_phone">
+            </div>
+            <div class="form-group">
+              <label>Address</label>
+              <input type="text" id="company_address">
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="saveSection(['company_name','company_email','company_phone','company_address'])">Save Company Info</button>
+        </div>
+      </div>
+
+      <!-- Branding -->
+      <div class="section" id="section-branding">
+        <div class="panel">
+          <h2>Logo</h2>
+          <p style="font-size:13px;color:#666;margin-top:-10px;margin-bottom:16px;">Upload your company logo. It will appear on all PDF documents and page headers. Recommended: PNG with transparent background.</p>
+          <img src="/logo.png" id="logoPreview" class="preview-img" onerror="this.style.display='none'">
+          <div class="form-group" style="margin-top:16px;">
+            <label>Upload New Logo (PNG/JPG, max 5MB)</label>
+            <input type="file" id="logoFile" accept="image/*">
+          </div>
+          <button class="btn btn-primary" onclick="uploadFile('logoFile','logo')">Upload Logo</button>
+        </div>
+        <div class="panel">
+          <h2>Signature</h2>
+          <p style="font-size:13px;color:#666;margin-top:-10px;margin-bottom:16px;">Upload your signature image. It will appear at the bottom of invoice and quotation PDFs.</p>
+          <img src="/signature.png" id="sigPreview" class="preview-img" onerror="this.style.display='none'">
+          <div class="form-group" style="margin-top:16px;">
+            <label>Upload Signature (PNG/JPG, max 5MB)</label>
+            <input type="file" id="sigFile" accept="image/*">
+          </div>
+          <button class="btn btn-primary" onclick="uploadFile('sigFile','signature')">Upload Signature</button>
+        </div>
+      </div>
+
+      <!-- Invoice Numbers -->
+      <div class="section" id="section-invoices">
+        <div class="panel">
+          <h2>Invoice Number Format</h2>
+          <div class="toggle-switch">
+            <label class="toggle">
+              <input type="checkbox" id="invoice_number_use_year" onchange="updateInvPreview()">
+              <span class="slider"></span>
+            </label>
+            <label>Include current year in number (e.g. 2026)</label>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Prefix</label>
+              <input type="text" id="invoice_prefix" placeholder="e.g. INV-" oninput="updateInvPreview()">
+              <div class="hint">Text before the number</div>
+            </div>
+            <div class="form-group">
+              <label>Suffix</label>
+              <input type="text" id="invoice_suffix" placeholder="e.g. -RT" oninput="updateInvPreview()">
+              <div class="hint">Text after the number</div>
+            </div>
+            <div class="form-group">
+              <label>Number Padding (digits)</label>
+              <input type="number" id="invoice_number_padding" min="1" max="8" value="2" oninput="updateInvPreview()">
+              <div class="hint">Pad the sequence with leading zeros</div>
+            </div>
+          </div>
+          <div>Preview: <span id="invNumberPreview" class="number-preview">—</span></div>
+          <div style="margin-top:18px;">
+            <button class="btn btn-primary" onclick="saveSection(['invoice_prefix','invoice_suffix','invoice_number_padding','invoice_number_use_year'])">Save Invoice Format</button>
+          </div>
+
+          <div class="reset-box">
+            <p><strong>Reset / Set Start Number</strong> — The next new invoice will use this sequence number. Use this when starting fresh or after importing historical data.</p>
+            <div class="reset-row">
+              <input type="number" id="invStartNum" min="1" value="1" placeholder="Start at">
+              <button class="btn btn-warning" onclick="resetSequence('invoice')">Apply Start Number</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quotation Numbers -->
+      <div class="section" id="section-quotations">
+        <div class="panel">
+          <h2>Quotation Number Format</h2>
+          <div class="toggle-switch">
+            <label class="toggle">
+              <input type="checkbox" id="quotation_number_use_year" onchange="updateQuotePreview()">
+              <span class="slider"></span>
+            </label>
+            <label>Include current year in number (e.g. 2026)</label>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Prefix</label>
+              <input type="text" id="quotation_prefix" placeholder="e.g. QT-" oninput="updateQuotePreview()">
+              <div class="hint">Text before the number</div>
+            </div>
+            <div class="form-group">
+              <label>Suffix</label>
+              <input type="text" id="quotation_suffix" placeholder="e.g. -RT" oninput="updateQuotePreview()">
+              <div class="hint">Text after the number</div>
+            </div>
+            <div class="form-group">
+              <label>Number Padding (digits)</label>
+              <input type="number" id="quotation_number_padding" min="1" max="8" value="2" oninput="updateQuotePreview()">
+              <div class="hint">Pad the sequence with leading zeros</div>
+            </div>
+          </div>
+          <div>Preview: <span id="quoteNumberPreview" class="number-preview">—</span></div>
+          <div style="margin-top:18px;">
+            <button class="btn btn-primary" onclick="saveSection(['quotation_prefix','quotation_suffix','quotation_number_padding','quotation_number_use_year'])">Save Quotation Format</button>
+          </div>
+
+          <div class="reset-box">
+            <p><strong>Reset / Set Start Number</strong> — The next new quotation will use this sequence number.</p>
+            <div class="reset-row">
+              <input type="number" id="quoteStartNum" min="1" value="1" placeholder="Start at">
+              <button class="btn btn-warning" onclick="resetSequence('quotation')">Apply Start Number</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PDF & Content Defaults -->
+      <div class="section" id="section-pdf">
+        <div class="panel">
+          <h2>PDF &amp; Content Defaults</h2>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Currency Symbol</label>
+              <input type="text" id="currency_symbol" placeholder="e.g. Kshs">
+              <div class="hint">Shown in PDFs and on the form pages</div>
+            </div>
+            <div class="form-group">
+              <label>Tax Rate (%)</label>
+              <input type="number" id="tax_rate" min="0" max="100" step="0.1" placeholder="e.g. 16">
+              <div class="hint">Set to 0 to disable tax line in PDFs</div>
+            </div>
+            <div class="form-group">
+              <label>PDF Page Size</label>
+              <select id="pdf_page_size">
+                <option value="A4">A4</option>
+                <option value="Letter">Letter</option>
+                <option value="Legal">Legal</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Default Salesperson</label>
+              <input type="text" id="default_salesperson" placeholder="e.g. Ramjius Muhsin">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Default Payment Details</label>
+            <input type="text" id="default_payment_details" placeholder="e.g. CHEQUE NAME: RAMTECHNOLOGIES">
+            <div class="hint">Pre-filled on every new invoice and quotation</div>
+          </div>
+          <div class="form-group">
+            <label>Terms &amp; Conditions</label>
+            <textarea id="terms_and_conditions" rows="4" placeholder="Enter terms and conditions text..."></textarea>
+            <div class="hint">Printed in quotation PDFs</div>
+          </div>
+          <button class="btn btn-primary" onclick="saveSection(['currency_symbol','tax_rate','pdf_page_size','default_salesperson','default_payment_details','terms_and_conditions'])">Save PDF &amp; Defaults</button>
+        </div>
+      </div>
+
+      <!-- Users -->
+      <div class="section" id="section-users">
+        <div class="panel">
+          <h2>Admin Users</h2>
+          <table class="user-table" id="userTable">
+            <thead><tr><th>Username</th><th>Email</th><th>Created</th></tr></thead>
+            <tbody id="userTableBody"><tr><td colspan="3" style="color:#888;">Loading...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>Add New Admin User</h2>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Username</label>
+              <input type="text" id="newUsername">
+            </div>
+            <div class="form-group">
+              <label>Email</label>
+              <input type="email" id="newEmail">
+            </div>
+            <div class="form-group">
+              <label>Password</label>
+              <input type="password" id="newPassword">
+            </div>
+            <div class="form-group">
+              <label>Confirm Password</label>
+              <input type="password" id="newConfirm">
+            </div>
+          </div>
+          <button class="btn btn-success" onclick="addUser()">Create User</button>
+        </div>
+        <div class="panel">
+          <h2>Change My Password</h2>
+          <div class="form-group" style="max-width:340px;">
+            <label>Current Password</label>
+            <input type="password" id="currentPwd">
+          </div>
+          <div class="form-group" style="max-width:340px;">
+            <label>New Password</label>
+            <input type="password" id="newPwd">
+          </div>
+          <div class="form-group" style="max-width:340px;">
+            <label>Confirm New Password</label>
+            <input type="password" id="confirmPwd">
+          </div>
+          <button class="btn btn-warning" onclick="changePassword()">Change Password</button>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let currentSettings = {};
+
+    // Init
+    (async () => {
+      const me = await fetch('/api/auth/me').then(r => r.json());
+      if (!me.loggedIn) { window.location.href = '/admin/login'; return; }
+      document.getElementById('welcomeMsg').textContent = 'Hello, ' + me.username;
+
+      const s = await fetch('/api/settings').then(r => r.json());
+      currentSettings = s;
+      applySettings(s);
+    })();
+
+    function applySettings(s) {
+      // Company
+      setVal('company_name', s.company_name);
+      setVal('company_email', s.company_email);
+      setVal('company_phone', s.company_phone);
+      setVal('company_address', s.company_address);
+      // Invoice numbers
+      setVal('invoice_prefix', s.invoice_prefix);
+      setVal('invoice_suffix', s.invoice_suffix);
+      setVal('invoice_number_padding', s.invoice_number_padding);
+      document.getElementById('invoice_number_use_year').checked = s.invoice_number_use_year !== 'false';
+      setVal('invStartNum', s.invoice_start_number);
+      updateInvPreview();
+      // Quotation numbers
+      setVal('quotation_prefix', s.quotation_prefix);
+      setVal('quotation_suffix', s.quotation_suffix);
+      setVal('quotation_number_padding', s.quotation_number_padding);
+      document.getElementById('quotation_number_use_year').checked = s.quotation_number_use_year !== 'false';
+      setVal('quoteStartNum', s.quotation_start_number);
+      updateQuotePreview();
+      // PDF & content
+      setVal('currency_symbol', s.currency_symbol);
+      setVal('tax_rate', s.tax_rate);
+      setVal('default_salesperson', s.default_salesperson);
+      setVal('default_payment_details', s.default_payment_details);
+      setVal('terms_and_conditions', s.terms_and_conditions);
+      if (s.pdf_page_size) {
+        const sel = document.getElementById('pdf_page_size');
+        for (let i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === s.pdf_page_size) sel.selectedIndex = i;
+        }
+      }
+    }
+
+    function setVal(id, val) {
+      const el = document.getElementById(id);
+      if (el) el.value = val || '';
+    }
+
+    function getVal(id) {
+      const el = document.getElementById(id);
+      if (!el) return '';
+      if (el.type === 'checkbox') return el.checked ? 'true' : 'false';
+      return el.value;
+    }
+
+    function showSection(name, link) {
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+      document.getElementById('section-' + name).classList.add('active');
+      link.classList.add('active');
+      if (name === 'users') loadUsers();
+    }
+
+    function updateInvPreview() {
+      const prefix = getVal('invoice_prefix');
+      const suffix = getVal('invoice_suffix');
+      const padding = parseInt(getVal('invoice_number_padding')) || 2;
+      const useYear = document.getElementById('invoice_number_use_year').checked;
+      const yearPart = useYear ? new Date().getFullYear() : '';
+      const seq = (parseInt(getVal('invStartNum')) || 1).toString().padStart(padding, '0');
+      document.getElementById('invNumberPreview').textContent = `${prefix}${yearPart}${seq}${suffix}`;
+    }
+
+    function updateQuotePreview() {
+      const prefix = getVal('quotation_prefix');
+      const suffix = getVal('quotation_suffix');
+      const padding = parseInt(getVal('quotation_number_padding')) || 2;
+      const useYear = document.getElementById('quotation_number_use_year').checked;
+      const yearPart = useYear ? new Date().getFullYear() : '';
+      const seq = (parseInt(getVal('quoteStartNum')) || 1).toString().padStart(padding, '0');
+      document.getElementById('quoteNumberPreview').textContent = `${prefix}${yearPart}${seq}${suffix}`;
+    }
+
+    async function saveSection(keys) {
+      const data = {};
+      keys.forEach(k => { data[k] = getVal(k); });
+      const r = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (r.ok) toast('Settings saved successfully', 'success');
+      else toast('Failed to save settings', 'error');
+    }
+
+    async function resetSequence(type) {
+      const startNumber = parseInt(type === 'invoice' ? document.getElementById('invStartNum').value : document.getElementById('quoteStartNum').value) || 1;
+      const r = await fetch(`/api/settings/reset-${type}-sequence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startNumber })
+      });
+      if (r.ok) toast(`${type} sequence set to start at ${startNumber}`, 'success');
+      else toast('Failed to reset sequence', 'error');
+    }
+
+    async function uploadFile(inputId, type) {
+      const file = document.getElementById(inputId).files[0];
+      if (!file) { toast('Please select a file first', 'error'); return; }
+      const formData = new FormData();
+      formData.append(type, file);
+      const r = await fetch(`/api/upload-${type}`, { method: 'POST', body: formData });
+      if (r.ok) {
+        toast(`${type.charAt(0).toUpperCase() + type.slice(1)} uploaded successfully`, 'success');
+        if (type === 'logo') {
+          const img = document.getElementById('logoPreview');
+          img.src = '/logo.png?' + Date.now();
+          img.style.display = 'block';
+        } else {
+          const img = document.getElementById('sigPreview');
+          img.src = '/signature.png?' + Date.now();
+          img.style.display = 'block';
+        }
+      } else {
+        toast('Upload failed', 'error');
+      }
+    }
+
+    async function loadUsers() {
+      const r = await fetch('/api/auth/users');
+      if (!r.ok) { document.getElementById('userTableBody').innerHTML = '<tr><td colspan="3" style="color:#e53935;">Could not load users</td></tr>'; return; }
+      const users = await r.json();
+      const tbody = document.getElementById('userTableBody');
+      if (!users.length) {
+        tbody.innerHTML = '<tr><td colspan="3" style="color:#888;">No users found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = users.map(u =>
+        `<tr><td>${escHtml(u.username)}</td><td>${escHtml(u.email)}</td><td>${new Date(u.created_at).toLocaleDateString()}</td></tr>`
+      ).join('');
+    }
+
+    async function addUser() {
+      const username = document.getElementById('newUsername').value.trim();
+      const email = document.getElementById('newEmail').value.trim();
+      const password = document.getElementById('newPassword').value;
+      const confirm = document.getElementById('newConfirm').value;
+      if (!username || !email || !password) { toast('All fields are required', 'error'); return; }
+      if (password !== confirm) { toast('Passwords do not match', 'error'); return; }
+      if (password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
+      const r = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password })
+      });
+      const data = await r.json();
+      if (r.ok && data.success) {
+        toast('User created successfully', 'success');
+        document.getElementById('newUsername').value = '';
+        document.getElementById('newEmail').value = '';
+        document.getElementById('newPassword').value = '';
+        document.getElementById('newConfirm').value = '';
+        loadUsers();
+      } else {
+        toast(data.error || 'Failed to create user', 'error');
+      }
+    }
+
+    async function changePassword() {
+      const currentPwd = document.getElementById('currentPwd').value;
+      const newPwd = document.getElementById('newPwd').value;
+      const confirmPwd = document.getElementById('confirmPwd').value;
+      if (!currentPwd || !newPwd) { toast('Fill in all password fields', 'error'); return; }
+      if (newPwd !== confirmPwd) { toast('New passwords do not match', 'error'); return; }
+      if (newPwd.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
+      const r = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPwd, newPwd })
+      });
+      const data = await r.json();
+      if (r.ok && data.success) {
+        toast('Password changed successfully', 'success');
+        document.getElementById('currentPwd').value = '';
+        document.getElementById('newPwd').value = '';
+        document.getElementById('confirmPwd').value = '';
+      } else {
+        toast(data.error || 'Failed to change password', 'error');
+      }
+    }
+
+    async function logout() {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/admin/login';
+    }
+
+    function toast(msg, type) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast ' + type + ' show';
+      clearTimeout(el._t);
+      el._t = setTimeout(() => { el.classList.remove('show'); }, 3000);
+    }
+
+    function escHtml(s) {
+      return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+  </script>
+</body>
+</html>
