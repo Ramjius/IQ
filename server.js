@@ -332,6 +332,7 @@ app.get('/', (req, res) => {
         <a href="/" class="active">Dashboard</a>
         <a href="/invoices">Invoices</a>
         <a href="/quotations">Quotations</a>
+        <a href="/clients">Clients</a>
         <a href="/admin" style="margin-left:auto;background:#424242;padding:5px 14px;border-radius:4px;">&#9881; Admin</a>
       </div>
       <div class="container">
@@ -656,6 +657,10 @@ app.get('/quotations', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'quotations.html'));
 });
 
+app.get('/clients', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'clients.html'));
+});
+
 // Success and error pages
 app.get('/success', (req, res) => {
   res.send(`
@@ -819,9 +824,49 @@ app.post('/api/save-invoice', (req, res) => {
 
 // Get Clients
 app.get('/api/clients', (req, res) => {
-  connection.query('SELECT name, address FROM clients ORDER BY name ASC', (err, results) => {
-    if (err) return res.status(500).send('Failed to fetch clients');
-    res.json(results);
+  const search = req.query.search || '';
+  const searchPattern = `%${search}%`;
+  connection.query(
+    'SELECT id, name, address, email, phone, created_at FROM clients WHERE name ILIKE ? OR email ILIKE ? OR phone ILIKE ? ORDER BY name ASC',
+    [searchPattern, searchPattern, searchPattern],
+    (err, results) => {
+      if (err) return res.status(500).send('Failed to fetch clients');
+      res.json(results);
+    }
+  );
+});
+
+app.post('/api/clients', (req, res) => {
+  const { name, address, email, phone } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  connection.query(
+    'INSERT INTO clients (name, address, email, phone) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address, email = EXCLUDED.email, phone = EXCLUDED.phone RETURNING *',
+    [name, address || '', email || '', phone || ''],
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true, client: results[0] });
+    }
+  );
+});
+
+app.put('/api/clients/:id', (req, res) => {
+  const { name, address, email, phone } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  connection.query(
+    'UPDATE clients SET name = ?, address = ?, email = ?, phone = ? WHERE id = ? RETURNING *',
+    [name, address || '', email || '', phone || '', req.params.id],
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!results.length) return res.status(404).json({ error: 'Client not found' });
+      res.json({ success: true, client: results[0] });
+    }
+  );
+});
+
+app.delete('/api/clients/:id', (req, res) => {
+  connection.query('DELETE FROM clients WHERE id = ?', [req.params.id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
   });
 });
 
