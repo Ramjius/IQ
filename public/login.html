@@ -28,6 +28,11 @@
     .msg.success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; display: block; }
     .hint { font-size: 12px; color: #aaa; text-align: center; margin-top: 14px; }
     .hint a { color: #4caf50; text-decoration: none; }
+    .divider { display: flex; align-items: center; gap: 10px; margin: 18px 0; color: #bbb; font-size: 13px; }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #eee; }
+    .btn-google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 11px; background: white; color: #444; border: 1.5px solid #ddd; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: bold; transition: background 0.2s, box-shadow 0.2s; text-decoration: none; }
+    .btn-google:hover { background: #f8f8f8; box-shadow: 0 1px 6px rgba(0,0,0,0.1); }
+    .btn-google svg { width: 20px; height: 20px; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -46,6 +51,11 @@
     <!-- Login Panel -->
     <div class="panel active" id="loginPanel">
       <div class="msg" id="loginMsg"></div>
+      <a href="/auth/google" class="btn-google" id="googleSignInBtn">
+        <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+        Continue with Google
+      </a>
+      <div class="divider">or sign in with password</div>
       <label>Username or Email</label>
       <input type="text" id="loginUsername" placeholder="Enter username or email" autocomplete="username">
       <label>Password</label>
@@ -56,6 +66,11 @@
 
     <!-- Signup Panel -->
     <div class="panel" id="signupPanel">
+      <a href="/auth/google" class="btn-google">
+        <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+        Sign up with Google
+      </a>
+      <div class="divider">or create account with password</div>
       <div class="msg" id="signupMsg"></div>
       <div id="signupBlockedMsg" style="display:none;color:#e53935;font-size:13px;margin-bottom:12px;padding:10px;background:#ffebee;border-radius:5px;border:1px solid #ef9a9a;">
         An admin account already exists. Additional accounts can only be created by a logged-in admin from the Admin Panel.
@@ -76,6 +91,21 @@
   </div>
 
   <script>
+    function showMsg(id, type, text) {
+      const el = document.getElementById(id);
+      el.className = 'msg ' + type;
+      el.textContent = text;
+    }
+
+    // Handle error params from Google OAuth redirect
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlError = urlParams.get('error');
+    if (urlError === 'google_not_configured') {
+      showMsg('loginMsg', 'error', 'Google sign-in is not configured yet. Please add your Google Client ID and Secret in the environment settings.');
+    } else if (urlError === 'google_failed') {
+      showMsg('loginMsg', 'error', 'Google sign-in failed. Please try again or use username/password.');
+    }
+
     // Check if any users exist — if so, hide signup form
     fetch('/api/auth/has-users').then(r => r.json()).then(data => {
       if (data.hasUsers) {

@@ -8,6 +8,8 @@ const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
 const multer = require('multer');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 require('dotenv').config();
 
 const app = express();
@@ -22,6 +24,63 @@ app.use(session({
 }));
 app.use(express.static(path.join(__dirname, 'public'))); // serve static files
 
+// ─── PASSPORT / GOOGLE OAUTH ─────────────────────────────────────────────────
+app.use(passport.initialize());
+app.use(passport.session());
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const BASE_URL = process.env.BASE_URL ||
+  (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : 'http://localhost:5000');
+
+if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy({
+    clientID: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
+    callbackURL: `${BASE_URL}/auth/google/callback`,
+  }, (accessToken, refreshToken, profile, done) => {
+    const email = (profile.emails && profile.emails[0]) ? profile.emails[0].value : '';
+    const displayName = profile.displayName || email;
+    // Find or create user by google_id
+    const findSql = 'SELECT * FROM users WHERE google_id = ?';
+    connection.query(findSql, [profile.id], (err, rows) => {
+      if (err) return done(err);
+      if (rows.length > 0) return done(null, rows[0]);
+      // Check if email already exists (link accounts)
+      connection.query('SELECT * FROM users WHERE email = ?', [email], (err2, rows2) => {
+        if (err2) return done(err2);
+        if (rows2.length > 0) {
+          // Link Google ID to existing account
+          connection.query('UPDATE users SET google_id = ? WHERE email = ?', [profile.id, email], (err3) => {
+            if (err3) return done(err3);
+            return done(null, rows2[0]);
+          });
+        } else {
+          // Create new user
+          const username = displayName.replace(/\s+/g, '_').toLowerCase() + '_' + profile.id.slice(-4);
+          connection.query(
+            'INSERT INTO users (username, email, google_id) VALUES (?, ?, ?) RETURNING *',
+            [username, email, profile.id],
+            (err4, newRows) => {
+              if (err4) return done(err4);
+              return done(null, newRows[0]);
+            }
+          );
+        }
+      });
+    });
+  }));
+} else {
+  console.warn('Google OAuth not configured — set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable it.');
+}
+
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser((id, done) => {
+  connection.query('SELECT * FROM users WHERE id = ?', [id], (err, rows) => {
+    done(err, rows[0] || null);
+  });
+});
+
 // Multer setup for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, path.join(__dirname, 'public')),
@@ -33,9 +92,9 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-// Auth middleware
+// Auth middleware — supports both session (username/password) and Passport (Google OAuth)
 function requireAuth(req, res, next) {
-  if (req.session && req.session.userId) return next();
+  if ((req.session && req.session.userId) || (req.user && req.user.id)) return next();
   res.redirect('/login');
 }
 
@@ -2060,10 +2119,33 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 app.get('/api/auth/me', (req, res) => {
   if (req.session && req.session.userId) {
     res.json({ loggedIn: true, username: req.session.username });
+  } else if (req.user && req.user.id) {
+    res.json({ loggedIn: true, username: req.user.username || req.user.email });
   } else {
     res.json({ loggedIn: false });
   }
 });
+
+// ─── GOOGLE OAUTH ROUTES ──────────────────────────────────────────────────────
+
+app.get('/auth/google', (req, res, next) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    return res.redirect('/login?error=google_not_configured');
+  }
+  passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+});
+
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: '/login?error=google_failed' }),
+  (req, res) => {
+    // Set session userId so requireAuth works uniformly
+    if (req.user) {
+      req.session.userId = req.user.id;
+      req.session.username = req.user.username || req.user.email;
+    }
+    res.redirect('/');
+  }
+);
 
 // ─── ADMIN PAGE ROUTES ────────────────────────────────────────────────────────
 
