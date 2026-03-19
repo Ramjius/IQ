@@ -60,7 +60,8 @@
       <div class="form-row">
         <div class="form-group">
           <label>Invoice Number</label>
-          <input type="text" id="invoiceNumber" name="invoiceNumber" readonly>
+          <input type="text" id="invoiceNumber" name="invoiceNumber" placeholder="e.g. 202601">
+          <input type="hidden" id="originalInvoiceNumber">
         </div>
         <div class="form-group">
           <label>Status</label>
@@ -157,6 +158,7 @@
         .then(r => r.json())
         .then(inv => {
           document.getElementById('invoiceNumber').value = inv.invoice_number;
+          document.getElementById('originalInvoiceNumber').value = inv.invoice_number;
           document.getElementById('customerName').value = inv.customer_name || '';
           document.getElementById('address').value = inv.address || '';
           document.getElementById('paymentDetails').value = inv.payment_details || 'CHEQUE NAME: RAMTECHNOLOGIES';
@@ -226,7 +228,8 @@
 
     function getFormData() {
       return {
-        invoiceNumber: document.getElementById('invoiceNumber').value,
+        invoiceNumber: document.getElementById('invoiceNumber').value.trim(),
+        originalInvoiceNumber: document.getElementById('originalInvoiceNumber').value,
         customerName: document.getElementById('customerName').value,
         address: document.getElementById('address').value,
         paymentDetails: document.getElementById('paymentDetails').value,
@@ -263,27 +266,29 @@
 
     function saveInvoice() {
       const data = getFormData();
+      if (!data.invoiceNumber) { alert('Please enter an invoice number'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
       fetch('/api/save-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
-      }).then(r => {
-        if (r.ok) window.location.href = '/';
-        else alert('Failed to save invoice');
-      });
+      }).then(r => r.json()).then(result => {
+        if (result.success) window.location.href = '/';
+        else alert(result.error || 'Failed to save invoice');
+      }).catch(err => alert('Error: ' + err.message));
     }
 
     function updateInvoice() {
       const data = getFormData();
+      if (!data.invoiceNumber) { alert('Please enter an invoice number'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
       fetch('/api/update-invoice', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       }).then(r => r.json()).then(result => {
-        if (result.success) { alert('Invoice updated successfully!'); window.location.href = '/'; }
-        else alert('Failed to update invoice: ' + (result.error || ''));
+        if (result.success) { window.location.href = '/'; }
+        else alert(result.error || 'Failed to update invoice');
       }).catch(err => alert('Error: ' + err.message));
     }
 

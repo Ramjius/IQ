@@ -36,7 +36,7 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 // Auth middleware
 function requireAuth(req, res, next) {
   if (req.session && req.session.userId) return next();
-  res.redirect('/admin/login');
+  res.redirect('/login');
 }
 
 // Settings helper — fetch all settings as an object
@@ -83,7 +83,12 @@ pool.connect((err, client, release) => {
 });
 
 // Route for serving the dashboard
-app.get('/', (req, res) => {
+app.get('/login', (req, res) => {
+  if (req.session && req.session.userId) return res.redirect('/');
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/', requireAuth, (req, res) => {
   const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -648,16 +653,15 @@ app.get('/', (req, res) => {
 });
 
 // Serve invoices page
-app.get('/invoices', (req, res) => {
+app.get('/invoices', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'invoices.html'));
 });
 
-// Serve quotations page
-app.get('/quotations', (req, res) => {
+app.get('/quotations', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'quotations.html'));
 });
 
-app.get('/clients', (req, res) => {
+app.get('/clients', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'clients.html'));
 });
 
@@ -779,22 +783,20 @@ app.get('/error', (req, res) => {
 // Save Quotation
 app.post('/api/save-quotation', (req, res) => {
   const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
-  
-  // First, upsert client
-  const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
-  connection.query(upsertClient, [customerName, address], (clientErr) => {
-    if (clientErr) console.error('Error upserting client:', clientErr);
-    
-    const query = `
-      INSERT INTO quotations (date, quote_number, customer_name, address, salesperson, payment_terms, due_date, items, total_amount, payment_details)
-      VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    connection.query(query, [quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails], (err, result) => {
-      if (err) {
-        console.error('Database Error:', err);
-        return res.redirect('/error');
-      }
-      res.redirect('/success');
+
+  // Check for duplicate quote number
+  connection.query('SELECT id FROM quotations WHERE quote_number = ?', [quoteNumber], (dupErr, dupRows) => {
+    if (dupErr) return res.status(500).json({ error: 'Database error' });
+    if (dupRows.length > 0) return res.status(409).json({ error: `Quote number "${quoteNumber}" already exists. Please use a different number.` });
+
+    const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
+    connection.query(upsertClient, [customerName, address], (clientErr) => {
+      if (clientErr) console.error('Error upserting client:', clientErr);
+      const query = `INSERT INTO quotations (date, quote_number, customer_name, address, salesperson, payment_terms, due_date, items, total_amount, payment_details) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      connection.query(query, [quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails], (err) => {
+        if (err) { console.error('Database Error:', err); return res.status(500).json({ error: 'Failed to save quotation' }); }
+        res.json({ success: true });
+      });
     });
   });
 });
@@ -802,22 +804,20 @@ app.post('/api/save-quotation', (req, res) => {
 // Save Invoice
 app.post('/api/save-invoice', (req, res) => {
   const { invoiceNumber, customerName, address, items, totalAmount, paymentDetails, status } = req.body;
-  
-  // First, upsert client
-  const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
-  connection.query(upsertClient, [customerName, address], (clientErr) => {
-    if (clientErr) console.error('Error upserting client:', clientErr);
 
-    const query = `
-      INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_details, status)
-      VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)
-    `;
-    connection.query(query, [invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending'], (err, result) => {
-      if (err) {
-        console.error('Database Error:', err);
-        return res.status(500).send('Failed to save invoice');
-      }
-      res.send('Invoice saved successfully!');
+  // Check for duplicate invoice number
+  connection.query('SELECT id FROM invoices WHERE invoice_number = ?', [invoiceNumber], (dupErr, dupRows) => {
+    if (dupErr) return res.status(500).json({ error: 'Database error' });
+    if (dupRows.length > 0) return res.status(409).json({ error: `Invoice number "${invoiceNumber}" already exists. Please use a different number.` });
+
+    const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
+    connection.query(upsertClient, [customerName, address], (clientErr) => {
+      if (clientErr) console.error('Error upserting client:', clientErr);
+      const query = `INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_details, status) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)`;
+      connection.query(query, [invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending'], (err) => {
+        if (err) { console.error('Database Error:', err); return res.status(500).json({ error: 'Failed to save invoice' }); }
+        res.json({ success: true });
+      });
     });
   });
 });
@@ -896,32 +896,63 @@ app.get('/api/quotation/:quoteNumber', (req, res) => {
   });
 });
 
-// Update invoice
+// Update invoice (supports number change via originalInvoiceNumber)
 app.put('/api/update-invoice', (req, res) => {
-  const { invoiceNumber, customerName, address, items, totalAmount, paymentDetails, status } = req.body;
-  const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
-  connection.query(upsertClient, [customerName, address], (clientErr) => {
-    if (clientErr) console.error('Error upserting client:', clientErr);
-    const query = `UPDATE invoices SET customer_name = ?, address = ?, items = ?, total_amount = ?, payment_details = ?, status = ? WHERE invoice_number = ?`;
-    connection.query(query, [customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending', invoiceNumber], (err) => {
-      if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update invoice' }); }
-      res.json({ success: true });
+  const { invoiceNumber, originalInvoiceNumber, customerName, address, items, totalAmount, paymentDetails, status } = req.body;
+  const lookupNumber = originalInvoiceNumber || invoiceNumber;
+  const newNumber = invoiceNumber;
+
+  // If number changed, check new number isn't already taken by a different record
+  if (newNumber !== lookupNumber) {
+    connection.query('SELECT id FROM invoices WHERE invoice_number = ?', [newNumber], (dupErr, dupRows) => {
+      if (dupErr) return res.status(500).json({ error: 'Database error' });
+      if (dupRows.length > 0) return res.status(409).json({ error: `Invoice number "${newNumber}" is already in use.` });
+      doUpdateInvoice();
     });
-  });
+  } else {
+    doUpdateInvoice();
+  }
+
+  function doUpdateInvoice() {
+    const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
+    connection.query(upsertClient, [customerName, address], (clientErr) => {
+      if (clientErr) console.error('Error upserting client:', clientErr);
+      const query = `UPDATE invoices SET invoice_number = ?, customer_name = ?, address = ?, items = ?, total_amount = ?, payment_details = ?, status = ? WHERE invoice_number = ?`;
+      connection.query(query, [newNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending', lookupNumber], (err) => {
+        if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update invoice' }); }
+        res.json({ success: true, newInvoiceNumber: newNumber });
+      });
+    });
+  }
 });
 
-// Update quotation
+// Update quotation (supports number change via originalQuoteNumber)
 app.put('/api/update-quotation', (req, res) => {
-  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
-  const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
-  connection.query(upsertClient, [customerName, address], (clientErr) => {
-    if (clientErr) console.error('Error upserting client:', clientErr);
-    const query = `UPDATE quotations SET customer_name = ?, address = ?, salesperson = ?, payment_terms = ?, due_date = ?, items = ?, total_amount = ?, payment_details = ? WHERE quote_number = ?`;
-    connection.query(query, [customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails, quoteNumber], (err) => {
-      if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update quotation' }); }
-      res.json({ success: true });
+  const { quoteNumber, originalQuoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  const lookupNumber = originalQuoteNumber || quoteNumber;
+  const newNumber = quoteNumber;
+
+  if (newNumber !== lookupNumber) {
+    connection.query('SELECT id FROM quotations WHERE quote_number = ?', [newNumber], (dupErr, dupRows) => {
+      if (dupErr) return res.status(500).json({ error: 'Database error' });
+      if (dupRows.length > 0) return res.status(409).json({ error: `Quote number "${newNumber}" is already in use.` });
+      doUpdateQuotation();
     });
-  });
+  } else {
+    doUpdateQuotation();
+  }
+
+  function doUpdateQuotation() {
+    const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
+    connection.query(upsertClient, [customerName, address], (clientErr) => {
+      if (clientErr) console.error('Error upserting client:', clientErr);
+      const query = `UPDATE quotations SET quote_number = ?, customer_name = ?, address = ?, salesperson = ?, payment_terms = ?, due_date = ?, items = ?, total_amount = ?, payment_details = ? WHERE quote_number = ?`;
+      connection.query(query, [newNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails, lookupNumber], (err) => {
+        if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update quotation' }); }
+        res.json({ success: true, newQuoteNumber: newNumber });
+      });
+    });
+  }
 });
 
 // Get Dashboard Data

@@ -60,7 +60,8 @@
       <div class="form-row">
         <div class="form-group">
           <label>Quote Number</label>
-          <input type="text" id="quoteNumber" name="quoteNumber" readonly>
+          <input type="text" id="quoteNumber" name="quoteNumber" placeholder="e.g. 202601">
+          <input type="hidden" id="originalQuoteNumber">
         </div>
         <div class="form-group">
           <label>Due Date</label>
@@ -163,6 +164,7 @@
         .then(r => r.json())
         .then(q => {
           document.getElementById('quoteNumber').value = q.quote_number;
+          document.getElementById('originalQuoteNumber').value = q.quote_number;
           document.getElementById('customerName').value = q.customer_name || '';
           document.getElementById('address').value = q.address || '';
           document.getElementById('salesperson').value = q.salesperson || '';
@@ -238,7 +240,8 @@
 
     function getFormData() {
       return {
-        quoteNumber: document.getElementById('quoteNumber').value,
+        quoteNumber: document.getElementById('quoteNumber').value.trim(),
+        originalQuoteNumber: document.getElementById('originalQuoteNumber').value,
         customerName: document.getElementById('customerName').value,
         address: document.getElementById('address').value,
         salesperson: document.getElementById('salesperson').value,
@@ -277,27 +280,29 @@
 
     function saveQuotation() {
       const data = getFormData();
+      if (!data.quoteNumber) { alert('Please enter a quote number'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
       fetch('/api/save-quotation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
-      }).then(r => {
-        if (r.ok) window.location.href = '/';
-        else alert('Failed to save quotation');
-      });
+      }).then(r => r.json()).then(result => {
+        if (result.success) window.location.href = '/';
+        else alert(result.error || 'Failed to save quotation');
+      }).catch(err => alert('Error: ' + err.message));
     }
 
     function updateQuotation() {
       const data = getFormData();
+      if (!data.quoteNumber) { alert('Please enter a quote number'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
       fetch('/api/update-quotation', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       }).then(r => r.json()).then(result => {
-        if (result.success) { alert('Quotation updated successfully!'); window.location.href = '/'; }
-        else alert('Failed to update quotation: ' + (result.error || ''));
+        if (result.success) { window.location.href = '/'; }
+        else alert(result.error || 'Failed to update quotation');
       }).catch(err => alert('Error: ' + err.message));
     }
 

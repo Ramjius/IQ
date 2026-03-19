@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ramtechnologies — Sign In</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .brand { text-align: center; margin-bottom: 28px; }
+    .brand img { height: 80px; object-fit: contain; }
+    .brand h1 { margin: 10px 0 2px; font-size: 24px; color: #212121; }
+    .brand p { margin: 0; color: #777; font-size: 14px; }
+    .card { background: white; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.11); width: 400px; max-width: 96vw; overflow: hidden; }
+    .tabs { display: flex; border-bottom: 2px solid #f0f0f0; }
+    .tab { flex: 1; padding: 14px; text-align: center; cursor: pointer; font-size: 15px; font-weight: bold; color: #888; background: none; border: none; transition: all 0.2s; }
+    .tab.active { color: #212121; border-bottom: 3px solid #4caf50; margin-bottom: -2px; }
+    .tab:hover:not(.active) { background: #fafafa; color: #444; }
+    .panel { padding: 28px; display: none; }
+    .panel.active { display: block; }
+    label { display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #555; }
+    input { width: 100%; padding: 10px 13px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 15px; }
+    input:focus { outline: none; border-color: #4caf50; box-shadow: 0 0 0 2px rgba(76,175,80,0.15); }
+    .btn { width: 100%; padding: 12px; background: #212121; color: white; border: none; border-radius: 6px; font-size: 15px; cursor: pointer; font-weight: bold; transition: background 0.2s; margin-top: 4px; }
+    .btn:hover { background: #4caf50; }
+    .msg { padding: 10px 14px; border-radius: 5px; font-size: 13px; margin-bottom: 14px; display: none; }
+    .msg.error { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; display: block; }
+    .msg.success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; display: block; }
+    .hint { font-size: 12px; color: #aaa; text-align: center; margin-top: 14px; }
+    .hint a { color: #4caf50; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="brand">
+    <img src="/logo.png" alt="Ramtechnologies" onerror="this.style.display='none'">
+    <h1>Ramtechnologies</h1>
+    <p>Invoicing &amp; Quotation Manager</p>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('login')">Sign In</button>
+      <button class="tab" onclick="switchTab('signup')" id="signupTab">Create Account</button>
+    </div>
+
+    <!-- Login Panel -->
+    <div class="panel active" id="loginPanel">
+      <div class="msg" id="loginMsg"></div>
+      <label>Username or Email</label>
+      <input type="text" id="loginUsername" placeholder="Enter username or email" autocomplete="username">
+      <label>Password</label>
+      <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password">
+      <button class="btn" onclick="doLogin()">Sign In</button>
+      <p class="hint">Don't have an account? <a href="#" onclick="switchTab('signup')">Create one</a></p>
+    </div>
+
+    <!-- Signup Panel -->
+    <div class="panel" id="signupPanel">
+      <div class="msg" id="signupMsg"></div>
+      <div id="signupBlockedMsg" style="display:none;color:#e53935;font-size:13px;margin-bottom:12px;padding:10px;background:#ffebee;border-radius:5px;border:1px solid #ef9a9a;">
+        An admin account already exists. Additional accounts can only be created by a logged-in admin from the Admin Panel.
+      </div>
+      <div id="signupForm">
+        <label>Username</label>
+        <input type="text" id="signupUsername" placeholder="Choose a username" autocomplete="username">
+        <label>Email</label>
+        <input type="email" id="signupEmail" placeholder="Enter your email" autocomplete="email">
+        <label>Password</label>
+        <input type="password" id="signupPassword" placeholder="Choose a strong password" autocomplete="new-password">
+        <label>Confirm Password</label>
+        <input type="password" id="signupConfirm" placeholder="Repeat your password" autocomplete="new-password">
+        <button class="btn" onclick="doSignup()">Create Account</button>
+      </div>
+      <p class="hint">Already have an account? <a href="#" onclick="switchTab('login')">Sign in</a></p>
+    </div>
+  </div>
+
+  <script>
+    // Check if any users exist — if so, hide signup form
+    fetch('/api/auth/has-users').then(r => r.json()).then(data => {
+      if (data.hasUsers) {
+        document.getElementById('signupBlockedMsg').style.display = 'block';
+        document.getElementById('signupForm').style.display = 'none';
+        document.getElementById('signupTab').style.display = 'none';
+      }
+    });
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById(tab + 'Panel').classList.add('active');
+      document.querySelectorAll('.tab')[tab === 'login' ? 0 : 1].classList.add('active');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (document.getElementById('loginPanel').classList.contains('active')) doLogin();
+        else doSignup();
+      }
+    });
+
+    async function doLogin() {
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      const msgEl = document.getElementById('loginMsg');
+      msgEl.className = 'msg';
+      if (!username || !password) { showMsg('loginMsg', 'error', 'Please fill in all fields'); return; }
+
+      const r = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await r.json();
+      if (r.ok && data.success) {
+        window.location.href = '/';
+      } else {
+        showMsg('loginMsg', 'error', data.error || 'Invalid credentials');
+      }
+    }
+
+    async function doSignup() {
+      const username = document.getElementById('signupUsername').value.trim();
+      const email = document.getElementById('signupEmail').value.trim();
+      const password = document.getElementById('signupPassword').value;
+      const confirm = document.getElementById('signupConfirm').value;
+
+      if (!username || !email || !password) { showMsg('signupMsg', 'error', 'All fields are required'); return; }
+      if (password !== confirm) { showMsg('signupMsg', 'error', 'Passwords do not match'); return; }
+      if (password.length < 6) { showMsg('signupMsg', 'error', 'Password must be at least 6 characters'); return; }
+
+      const r = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password })
+      });
+      const data = await r.json();
+      if (r.ok && data.success) {
+        showMsg('signupMsg', 'success', 'Account created! Signing you in...');
+        // Auto-login after signup
+        const lr = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const ld = await lr.json();
+        if (lr.ok && ld.success) {
+          setTimeout(() => { window.location.href = '/'; }, 800);
+        } else {
+          setTimeout(() => { switchTab('login'); }, 1200);
+        }
+      } else {
+        showMsg('signupMsg', 'error', data.error || 'Signup failed');
+      }
+    }
+
+    function showMsg(id, type, text) {
+      const el = document.getElementById(id);
+      el.className = 'msg ' + type;
+      el.textContent = text;
+    }
+  </script>
+</body>
+</html>
