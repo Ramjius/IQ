@@ -10,6 +10,8 @@ const session = require('express-session');
 const multer = require('multer');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -141,10 +143,44 @@ pool.connect((err, client, release) => {
   console.log('Connected to PostgreSQL database');
 });
 
+// Create password_reset_tokens table if it doesn't exist
+pool.query(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`).catch(err => console.error('Error creating password_reset_tokens table:', err));
+
+// Email transporter (configured via SMTP_* env vars)
+function createMailTransporter() {
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || '587');
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  if (!host || !user || !pass) return null;
+  return nodemailer.createTransport({
+    host, port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+}
+
 // Route for serving the dashboard
 app.get('/login', (req, res) => {
   if (req.session && req.session.userId) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/forgot-password', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'forgot-password.html'));
+});
+
+app.get('/reset-password', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'reset-password.html'));
 });
 
 app.get('/', requireAuth, (req, res) => {
@@ -2112,6 +2148,116 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── PASSWORD RESET ROUTES ────────────────────────────────────────────────────
+
+// POST /api/auth/forgot-password — generate token and send email
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    const rows = await new Promise((resolve, reject) => {
+      connection.query('SELECT * FROM users WHERE email = ?', [email.trim().toLowerCase()], (err, r) => {
+        err ? reject(err) : resolve(r);
+      });
+    });
+
+    // Always respond with success to prevent email enumeration
+    if (!rows.length) return res.json({ success: true });
+
+    const user = rows[0];
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Invalidate any existing tokens for this user
+    await pool.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [user.id]);
+
+    await pool.query(
+      'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [user.id, token, expiresAt]
+    );
+
+    const transporter = createMailTransporter();
+    if (!transporter) {
+      console.warn('SMTP not configured — password reset token:', token);
+      return res.json({ success: true });
+    }
+
+    const resetUrl = `${BASE_URL}/reset-password?token=${token}`;
+    const fromAddr = process.env.SMTP_FROM || process.env.SMTP_USER;
+
+    await transporter.sendMail({
+      from: `"Ramtechnologies" <${fromAddr}>`,
+      to: email,
+      subject: 'Reset your password',
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f8f8f8;border-radius:8px;">
+          <h2 style="color:#212121;margin-top:0;">Reset your password</h2>
+          <p style="color:#555;">Hi ${user.username || ''},</p>
+          <p style="color:#555;">We received a request to reset the password for your Ramtechnologies account. Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+          <a href="${resetUrl}" style="display:inline-block;margin:20px 0;padding:12px 28px;background:#212121;color:white;border-radius:6px;text-decoration:none;font-weight:bold;font-size:15px;">Reset Password</a>
+          <p style="color:#999;font-size:12px;">If you didn't request this, you can safely ignore this email — your password will not change.</p>
+          <p style="color:#ccc;font-size:11px;">Link: ${resetUrl}</p>
+        </div>
+      `,
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Forgot password error:', e);
+    res.status(500).json({ error: 'Failed to send reset email. Please try again.' });
+  }
+});
+
+// GET /api/auth/validate-reset-token — check token validity
+app.get('/api/auth/validate-reset-token', async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) return res.status(400).json({ valid: false, error: 'No token provided' });
+
+    const result = await pool.query(
+      'SELECT * FROM password_reset_tokens WHERE token = $1 AND used = FALSE AND expires_at > NOW()',
+      [token]
+    );
+
+    if (!result.rows.length) {
+      return res.status(400).json({ valid: false, error: 'This reset link is invalid or has expired.' });
+    }
+    res.json({ valid: true });
+  } catch (e) {
+    res.status(500).json({ valid: false, error: 'Server error' });
+  }
+});
+
+// POST /api/auth/reset-password — apply new password
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password are required' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const tokenResult = await pool.query(
+      'SELECT * FROM password_reset_tokens WHERE token = $1 AND used = FALSE AND expires_at > NOW()',
+      [token]
+    );
+
+    if (!tokenResult.rows.length) {
+      return res.status(400).json({ error: 'This reset link is invalid or has expired.' });
+    }
+
+    const { user_id, id: tokenId } = tokenResult.rows[0];
+    const hash = await bcrypt.hash(newPassword, 12);
+
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, user_id]);
+    await pool.query('UPDATE password_reset_tokens SET used = TRUE WHERE id = $1', [tokenId]);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Reset password error:', e);
+    res.status(500).json({ error: 'Failed to reset password. Please try again.' });
   }
 });
 
