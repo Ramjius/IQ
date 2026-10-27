@@ -25,7 +25,8 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pdfkit": "^0.16.0",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "proxy-addr": "^2.0.8"
   },
   "devDependencies": {
     "electron": "^42.3.3"
