@@ -64,6 +64,10 @@
           <input type="hidden" id="originalQuoteNumber">
         </div>
         <div class="form-group">
+          <label for="issueDate">Quotation Date</label>
+          <input type="date" id="issueDate" name="issueDate" required>
+        </div>
+        <div class="form-group">
           <label>Due Date</label>
           <input type="date" id="dueDate" name="dueDate">
         </div>
@@ -141,6 +145,25 @@
   <script>
     let items = [];
     let editMode = false;
+    document.getElementById('issueDate').value = getTodayDate();
+
+    function getTodayDate() {
+      const today = new Date();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      return `${today.getFullYear()}-${month}-${day}`;
+    }
+
+    function toDateInputValue(value) {
+      if (!value) return '';
+      const valueString = String(value);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(valueString)) return valueString;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return '';
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      return `${parsed.getFullYear()}-${month}-${day}`;
+    }
 
     // Detect edit mode from URL
     const urlParams = new URLSearchParams(window.location.search);
@@ -165,6 +188,7 @@
         .then(q => {
           document.getElementById('quoteNumber').value = q.quote_number;
           document.getElementById('originalQuoteNumber').value = q.quote_number;
+          document.getElementById('issueDate').value = toDateInputValue(q.date);
           document.getElementById('customerName').value = q.customer_name || '';
           document.getElementById('address').value = q.address || '';
           document.getElementById('salesperson').value = q.salesperson || '';
@@ -242,6 +266,7 @@
       return {
         quoteNumber: document.getElementById('quoteNumber').value.trim(),
         originalQuoteNumber: document.getElementById('originalQuoteNumber').value,
+        issueDate: document.getElementById('issueDate').value,
         customerName: document.getElementById('customerName').value,
         address: document.getElementById('address').value,
         salesperson: document.getElementById('salesperson').value,
@@ -281,6 +306,7 @@
     function saveQuotation() {
       const data = getFormData();
       if (!data.quoteNumber) { alert('Please enter a quote number'); return; }
+      if (!data.issueDate) { alert('Please enter the quotation date'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
       fetch('/api/save-quotation', {
         method: 'POST',
@@ -295,6 +321,7 @@
     function updateQuotation() {
       const data = getFormData();
       if (!data.quoteNumber) { alert('Please enter a quote number'); return; }
+      if (!data.issueDate) { alert('Please enter the quotation date'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
       fetch('/api/update-quotation', {
         method: 'PUT',
@@ -309,6 +336,7 @@
     function exportPDF() {
       const data = getFormData();
       if (!data.customerName) { alert('Please enter customer name'); return; }
+      if (!data.issueDate) { alert('Please enter the quotation date'); return; }
       fetch('/api/export-quotation-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

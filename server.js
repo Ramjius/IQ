@@ -883,8 +883,34 @@ app.get('/error', (req, res) => {
 });
 
 // Save Quotation
+function getOptionalIssueDate(issueDate, res, documentLabel) {
+  if (issueDate === undefined || issueDate === null || issueDate === '') return null;
+  const isValid = typeof issueDate === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(issueDate) &&
+    !Number.isNaN(Date.parse(`${issueDate}T00:00:00Z`)) &&
+    new Date(`${issueDate}T00:00:00Z`).toISOString().slice(0, 10) === issueDate;
+  if (!isValid) {
+    res.status(400).json({ error: `Enter a valid ${documentLabel} date` });
+    return undefined;
+  }
+  return issueDate;
+}
+
+function formatDocumentDate(dateValue) {
+  if (!dateValue) return new Date().toLocaleDateString();
+  const dateString = String(dateValue);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString();
+  }
+  const parsed = new Date(dateValue);
+  return Number.isNaN(parsed.getTime()) ? new Date().toLocaleDateString() : parsed.toLocaleDateString();
+}
+
 app.post('/api/save-quotation', (req, res) => {
-  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  const { quoteNumber, issueDate: requestedIssueDate, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  const issueDate = getOptionalIssueDate(requestedIssueDate, res, 'quotation');
+  if (issueDate === undefined) return;
 
   // Check for duplicate quote number
   connection.query('SELECT id FROM quotations WHERE quote_number = ?', [quoteNumber], (dupErr, dupRows) => {
@@ -894,8 +920,8 @@ app.post('/api/save-quotation', (req, res) => {
     const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
     connection.query(upsertClient, [customerName, address], (clientErr) => {
       if (clientErr) console.error('Error upserting client:', clientErr);
-      const query = `INSERT INTO quotations (date, quote_number, customer_name, address, salesperson, payment_terms, due_date, items, total_amount, payment_details) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-      connection.query(query, [quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails], (err) => {
+      const query = `INSERT INTO quotations (date, quote_number, customer_name, address, salesperson, payment_terms, due_date, items, total_amount, payment_details) VALUES (COALESCE(?, NOW()), ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      connection.query(query, [issueDate, quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails], (err) => {
         if (err) { console.error('Database Error:', err); return res.status(500).json({ error: 'Failed to save quotation' }); }
         res.json({ success: true });
       });
@@ -929,7 +955,9 @@ function getInvoicePaymentFields(req, res) {
 }
 
 app.post('/api/save-invoice', (req, res) => {
-  const { invoiceNumber, customerName, address, items, totalAmount, status } = req.body;
+  const { invoiceNumber, issueDate: requestedIssueDate, customerName, address, items, totalAmount, status } = req.body;
+  const issueDate = getOptionalIssueDate(requestedIssueDate, res, 'invoice');
+  if (issueDate === undefined) return;
   const payment = getInvoicePaymentFields(req, res);
   if (!payment) return;
 
@@ -941,8 +969,8 @@ app.post('/api/save-invoice', (req, res) => {
     const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
     connection.query(upsertClient, [customerName, address], (clientErr) => {
       if (clientErr) console.error('Error upserting client:', clientErr);
-      const query = `INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_mode, payment_date, transaction_id, status) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-      connection.query(query, [invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, payment.paymentMode, payment.paymentDate, payment.transactionId, status || 'pending'], (err) => {
+      const query = `INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_mode, payment_date, transaction_id, status) VALUES (COALESCE(?, NOW()), ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      connection.query(query, [issueDate, invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, payment.paymentMode, payment.paymentDate, payment.transactionId, status || 'pending'], (err) => {
         if (err) { console.error('Database Error:', err); return res.status(500).json({ error: 'Failed to save invoice' }); }
         res.json({ success: true });
       });
@@ -1026,7 +1054,9 @@ app.get('/api/quotation/:quoteNumber', (req, res) => {
 
 // Update invoice (supports number change via originalInvoiceNumber)
 app.put('/api/update-invoice', (req, res) => {
-  const { invoiceNumber, originalInvoiceNumber, customerName, address, items, totalAmount, status } = req.body;
+  const { invoiceNumber, originalInvoiceNumber, issueDate: requestedIssueDate, customerName, address, items, totalAmount, status } = req.body;
+  const issueDate = getOptionalIssueDate(requestedIssueDate, res, 'invoice');
+  if (issueDate === undefined) return;
   const payment = getInvoicePaymentFields(req, res);
   if (!payment) return;
   const lookupNumber = originalInvoiceNumber || invoiceNumber;
@@ -1047,8 +1077,8 @@ app.put('/api/update-invoice', (req, res) => {
     const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
     connection.query(upsertClient, [customerName, address], (clientErr) => {
       if (clientErr) console.error('Error upserting client:', clientErr);
-      const query = `UPDATE invoices SET invoice_number = ?, customer_name = ?, address = ?, items = ?, total_amount = ?, payment_mode = ?, payment_date = ?, transaction_id = ?, status = ? WHERE invoice_number = ?`;
-      connection.query(query, [newNumber, customerName, address, JSON.stringify(items), totalAmount, payment.paymentMode, payment.paymentDate, payment.transactionId, status || 'pending', lookupNumber], (err) => {
+      const query = `UPDATE invoices SET date = COALESCE(?, date), invoice_number = ?, customer_name = ?, address = ?, items = ?, total_amount = ?, payment_mode = ?, payment_date = ?, transaction_id = ?, status = ? WHERE invoice_number = ?`;
+      connection.query(query, [issueDate, newNumber, customerName, address, JSON.stringify(items), totalAmount, payment.paymentMode, payment.paymentDate, payment.transactionId, status || 'pending', lookupNumber], (err) => {
         if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update invoice' }); }
         res.json({ success: true, newInvoiceNumber: newNumber });
       });
@@ -1058,7 +1088,9 @@ app.put('/api/update-invoice', (req, res) => {
 
 // Update quotation (supports number change via originalQuoteNumber)
 app.put('/api/update-quotation', (req, res) => {
-  const { quoteNumber, originalQuoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  const { quoteNumber, originalQuoteNumber, issueDate: requestedIssueDate, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  const issueDate = getOptionalIssueDate(requestedIssueDate, res, 'quotation');
+  if (issueDate === undefined) return;
   const lookupNumber = originalQuoteNumber || quoteNumber;
   const newNumber = quoteNumber;
 
@@ -1076,8 +1108,8 @@ app.put('/api/update-quotation', (req, res) => {
     const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
     connection.query(upsertClient, [customerName, address], (clientErr) => {
       if (clientErr) console.error('Error upserting client:', clientErr);
-      const query = `UPDATE quotations SET quote_number = ?, customer_name = ?, address = ?, salesperson = ?, payment_terms = ?, due_date = ?, items = ?, total_amount = ?, payment_details = ? WHERE quote_number = ?`;
-      connection.query(query, [newNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails, lookupNumber], (err) => {
+      const query = `UPDATE quotations SET date = COALESCE(?, date), quote_number = ?, customer_name = ?, address = ?, salesperson = ?, payment_terms = ?, due_date = ?, items = ?, total_amount = ?, payment_details = ? WHERE quote_number = ?`;
+      connection.query(query, [issueDate, newNumber, customerName, address, salesperson, paymentTerms, dueDate, JSON.stringify(items), totalAmount, paymentDetails, lookupNumber], (err) => {
         if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update quotation' }); }
         res.json({ success: true, newQuoteNumber: newNumber });
       });
@@ -1182,7 +1214,7 @@ app.post('/api/import-from-directory', async (req, res) => {
 
 // Export Quotation as PDF - FIXED VERSION
 app.post('/api/export-quotation-pdf', (req, res) => {
-  const { quoteNumber, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
+  const { quoteNumber, issueDate, customerName, address, salesperson, paymentTerms, dueDate, items, totalAmount, paymentDetails } = req.body;
   const fileName = `quotation_${quoteNumber}.pdf`;
   const filePath = path.join(__dirname, fileName);
 
@@ -1207,7 +1239,7 @@ app.post('/api/export-quotation-pdf', (req, res) => {
   doc.fontSize(20).fillColor('#0000FF').text('QUOTATION', 0, 70, { align: 'right', width: 540 });
   doc.fillColor('#000000');
   doc.fontSize(12).text(`Quote Number: ${quoteNumber}`, 0, 100, { align: 'right', width: 540 });
-  doc.text(`Date: ${new Date().toLocaleDateString()}`, 0, 115, { align: 'right', width: 540 });
+  doc.text(`Date: ${formatDocumentDate(issueDate)}`, 0, 115, { align: 'right', width: 540 });
 
   // Customer Information
   doc.fontSize(14).text('Customer Information', 50, 200);
@@ -1378,7 +1410,7 @@ app.post('/api/export-quotation-pdf', (req, res) => {
 
 // Export Invoice as PDF - FIXED VERSION
 app.post('/api/export-invoice-pdf', (req, res) => {
-  const { invoiceNumber, customerName, address, items, totalAmount, status, paymentMode, paymentDate, transactionId } = req.body;
+  const { invoiceNumber, issueDate, customerName, address, items, totalAmount, status, paymentMode, paymentDate, transactionId } = req.body;
   const fileName = `${invoiceNumber}-${customerName}.pdf`;
   const filePath = path.join(__dirname, fileName);
 
@@ -1403,7 +1435,7 @@ app.post('/api/export-invoice-pdf', (req, res) => {
   doc.fontSize(20).fillColor('#0000FF').text('INVOICE', 0, 70, { align: 'right', width: 540 });
   doc.fillColor('#000000');
   doc.fontSize(12).text(`Invoice Number: ${invoiceNumber}`, 0, 100, { align: 'right', width: 540 });
-  doc.text(`Date: ${new Date().toLocaleDateString()}`, 0, 115, { align: 'right', width: 540 });
+  doc.text(`Date: ${formatDocumentDate(issueDate)}`, 0, 115, { align: 'right', width: 540 });
   doc.fillColor(status && status.toUpperCase() === 'PAID' ? '#008000' : '#FF0000');
   doc.text(`Status: ${(status || 'Pending').toUpperCase()}`, 0, 130, { align: 'right', width: 540 });
   doc.fillColor('#000000');
