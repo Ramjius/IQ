@@ -28,6 +28,6 @@
     "pg": "^8.20.0"
   },
   "devDependencies": {
-    "electron": "^35.0.2"
+    "electron": "^42.3.3"
   }
 }
