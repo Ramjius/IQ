@@ -9,8 +9,8 @@
     header { display: flex; justify-content: space-between; align-items: center; padding: 20px; background-color: #ffffff; color: black; }
     header h1 { margin: 0; font-size: 36px; }
     header img { height: 60px; }
-    .nav-menu { background-color: #212121; padding: 10px 20px; text-align: center; }
-    .nav-menu a { color: white; text-decoration: none; margin: 0 15px; font-size: 16px; padding: 5px 10px; border-radius: 4px; transition: background-color 0.3s; }
+    .nav-menu { background-color: #212121; padding: 10px 20px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; }
+    .nav-menu a { color: white; text-decoration: none; margin: 0 4px; font-size: 15px; padding: 6px 10px; border-radius: 4px; transition: background-color 0.3s; }
     .nav-menu a:hover { background-color: #424242; }
     .nav-menu a.active { background-color: #4caf50; }
     .form-container { max-width: 900px; margin: 30px auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
@@ -55,6 +55,9 @@
     <a href="/invoices" class="active">Invoices</a>
     <a href="/quotations">Quotations</a>
     <a href="/clients">Clients</a>
+    <a href="/expenses">Expenses</a>
+    <a href="/analytics">Analytics</a>
+    <a href="/taxes">Taxes</a>
   </div>
   <div class="form-container">
     <form id="invoiceForm">

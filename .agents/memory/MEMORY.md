@@ -1,0 +1,1 @@
+- [Kenyan tax setup](kenyan-tax-setup.md) — start tax estimates from the user's individual-income-tax, non-VAT-registered, VAT-exclusive setup.

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tax estimate - Ramtechnologies</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f4f4; color: #222; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #fff; }
+    header h1 { margin: 0; font-size: 30px; }
+    header img { height: 54px; }
+    .nav-menu { background: #212121; padding: 10px 18px; display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; }
+    .nav-menu a { color: #fff; text-decoration: none; padding: 7px 10px; border-radius: 4px; font-size: 14px; }
+    .nav-menu a:hover { background: #424242; }
+    .nav-menu a.active { background: #4caf50; }
+    main { max-width: 1120px; margin: 26px auto; padding: 0 16px 40px; }
+    .toolbar, .panel, .stat { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+    .toolbar { display: flex; align-items: center; gap: 12px; padding: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    .toolbar label { font-weight: 700; }
+    select, input { font: inherit; }
+    select, input[type=number] { width: 100%; padding: 10px 11px; border: 1px solid #d5d5d5; border-radius: 6px; background: #fff; }
+    .toolbar select { width: auto; min-width: 120px; }
+    .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .stat { padding: 17px; }
+    .stat-label { color: #777; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .stat-value { font-size: 23px; font-weight: 700; margin-top: 7px; }
+    .panel { padding: 20px; margin-bottom: 18px; }
+    .panel h2 { margin: 0 0 12px; font-size: 20px; }
+    .profile { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .pill { background: #e8f5e9; color: #246b35; padding: 7px 11px; border-radius: 20px; font-size: 13px; font-weight: 700; }
+    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .field label { display: block; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+    .help { color: #666; font-size: 12px; line-height: 1.5; margin: 6px 0 0; }
+    button { border: 0; border-radius: 6px; padding: 10px 15px; font-weight: 700; cursor: pointer; }
+    .primary { color: #fff; background: #212121; margin-top: 14px; }
+    .notice { border-left: 4px solid #e5a100; background: #fff8e1; border-radius: 5px; padding: 14px 16px; line-height: 1.5; font-size: 13px; margin: 15px 0; }
+    .notice.alert { border-color: #c62828; background: #ffebee; }
+    .notice.good { border-color: #2e7d32; background: #e8f5e9; }
+    .line-items { border-top: 1px solid #eee; margin-top: 10px; }
+    .line { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+    .line strong { text-align: right; }
+    .band-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .band-table td, .band-table th { border-bottom: 1px solid #eee; padding: 9px 8px; text-align: left; }
+    .band-table th { background: #f7f7f7; color: #555; font-size: 12px; text-transform: uppercase; }
+    .source-links a { color: #1769aa; }
+    .source-links li { margin: 7px 0; }
+    #error { color: #b3261e; }
+    @media(max-width: 760px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .form-grid { grid-template-columns: 1fr; } }
+    @media(max-width: 480px) { header { padding: 14px 16px; } header h1 { font-size: 24px; } .stats { grid-template-columns: 1fr; } .stat-value { font-size: 20px; } }
+  </style>
+</head>
+<body>
+  <header><h1>Kenya tax estimate</h1><img src="/logo.png" alt="Ramtechnologies logo" onerror="this.hidden=true"></header>
+  <nav class="nav-menu" aria-label="Main navigation">
+    <a href="/">Dashboard</a><a href="/invoices">Invoices</a><a href="/quotations">Quotations</a>
+    <a href="/clients">Clients</a><a href="/expenses">Expenses</a>
+    <a href="/analytics">Analytics</a><a href="/taxes" class="active">Taxes</a>
+  </nav>
+  <main>
+    <div class="toolbar"><label for="yearFilter">Tax year</label><select id="yearFilter"></select></div>
+    <div id="error" role="alert"></div>
+    <div class="profile">
+      <span class="pill">Individual income-tax estimate</span>
+      <span class="pill">VAT not registered</span>
+      <span class="pill">Invoice totals entered exclusive of VAT</span>
+    </div>
+    <div class="stats">
+      <section class="stat"><div class="stat-label">Invoiced sales</div><div class="stat-value" id="sales">Ksh 0.00</div></section>
+      <section class="stat"><div class="stat-label">Deductible expenses</div><div class="stat-value" id="deductible">Ksh 0.00</div></section>
+      <section class="stat"><div class="stat-label">Estimated taxable profit</div><div class="stat-value" id="profit">Ksh 0.00</div></section>
+      <section class="stat"><div class="stat-label">Estimated income tax</div><div class="stat-value" id="liability">Ksh 0.00</div></section>
+      <section class="stat"><div class="stat-label">Tax paid entered</div><div class="stat-value" id="paid">Ksh 0.00</div></section>
+      <section class="stat"><div class="stat-label">Estimated balance</div><div class="stat-value" id="balance">Ksh 0.00</div></section>
+    </div>
+    <section class="panel">
+      <h2>Estimate assumptions</h2>
+      <p class="help">Partnerships are taxed at each partner’s share. Add other taxable income and amounts already paid so the estimate uses your circumstances more closely.</p>
+      <form id="taxForm">
+        <div class="form-grid">
+          <div class="field"><label for="ownerShare">Your share of business profit (%)</label><input id="ownerShare" type="number" min="0" max="100" step="0.1" value="100" required><p class="help">Use 100% for a sole proprietorship. For a partnership, enter your share.</p></div>
+          <div class="field"><label for="otherIncome">Other taxable income for this year (KES)</label><input id="otherIncome" type="number" min="0" step="0.01" value="0" required><p class="help">Include other income taxed under individual rates, if applicable.</p></div>
+          <div class="field"><label for="taxPaid">Installments / tax already paid (KES)</label><input id="taxPaid" type="number" min="0" step="0.01" value="0" required><p class="help">Enter tax already paid or credited for this tax year.</p></div>
+        </div>
+        <button class="primary" type="submit">Save assumptions</button>
+      </form>
+      <div class="line-items" id="taxBreakdown"></div>
+      <p class="help">This estimate treats invoices issued during the selected year as business income and subtracts expenses marked tax deductible. It does not account for all allowances, losses, withholding credits, capital allowances, or other filing adjustments.</p>
+    </section>
+    <section class="panel">
+      <h2>VAT registration watch</h2>
+      <div id="vatNotice" class="notice"></div>
+      <div class="line"><span>Taxable invoice sales this year</span><strong id="vatSales">Ksh 0.00</strong></div>
+      <div class="line"><span>KRA annual taxable-supplies registration threshold</span><strong>Ksh 5,000,000</strong></div>
+      <p class="help">You indicated that the business is not VAT-registered. This is a threshold monitor, not a VAT payable calculation. If taxable supplies reach or are expected to reach the threshold, confirm registration obligations with KRA or a tax professional.</p>
+    </section>
+    <section class="panel">
+      <h2>Individual income-tax bands used</h2>
+      <table class="band-table">
+        <thead><tr><th>Annual taxable income slice</th><th>Rate</th></tr></thead>
+        <tbody>
+          <tr><td>First KES 288,000</td><td>10%</td></tr>
+          <tr><td>Next KES 100,000</td><td>25%</td></tr>
+          <tr><td>Next KES 5,612,000</td><td>30%</td></tr>
+          <tr><td>Next KES 3,600,000</td><td>32.5%</td></tr>
+          <tr><td>Above KES 9,600,000</td><td>35%</td></tr>
+        </tbody>
+      </table>
+      <p class="help">Resident personal relief of KES 28,800 per year is applied once. The estimate assumes a Kenyan-resident individual; non-resident and partnership circumstances can differ.</p>
+      <ul class="source-links">
+        <li><a href="https://www.kra.go.ke/images/publications/Income-Tax-Act-2026.pdf" target="_blank" rel="noopener">KRA Income Tax Act, 2026</a></li>
+        <li><a href="https://www.kra.go.ke/individual/filing-paying/types-of-taxes/value-added-tax" target="_blank" rel="noopener">KRA VAT guidance and registration threshold</a></li>
+      </ul>
+    </section>
+    <div class="notice">Planning estimate only, not a tax return or professional advice. The tax estimate uses year-to-date records as though they were the final figures for the year. Confirm allowable deductions, filing obligations, and final amounts with KRA or a qualified Kenyan tax professional.</div>
+  </main>
+  <script>
+    const money = new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const yearFilter = document.getElementById('yearFilter');
+    const taxForm = document.getElementById('taxForm');
+    const currentYear = new Date().getFullYear();
+    for (let year = currentYear; year >= currentYear - 5; year--) yearFilter.add(new Option(String(year), String(year)));
+    let summary = null;
+    yearFilter.addEventListener('change', loadTaxData);
+    taxForm.addEventListener('submit', saveTaxSettings);
+    ['ownerShare', 'otherIncome', 'taxPaid'].forEach(id => document.getElementById(id).addEventListener('input', renderTaxEstimate));
+    loadTaxData();
+
+    async function loadTaxData() {
+      document.getElementById('error').textContent = '';
+      try {
+        const [summaryResponse, settingsResponse] = await Promise.all([
+          fetch(`/api/finance-summary?year=${yearFilter.value}`),
+          fetch(`/api/tax-settings?year=${yearFilter.value}`),
+        ]);
+        const [summaryData, settings] = await Promise.all([summaryResponse.json(), settingsResponse.json()]);
+        if (!summaryResponse.ok) throw new Error(summaryData.error || 'Could not load financial data');
+        if (!settingsResponse.ok) throw new Error(settings.error || 'Could not load tax assumptions');
+        summary = summaryData;
+        document.getElementById('ownerShare').value = settings.ownerSharePercent ?? 100;
+        document.getElementById('otherIncome').value = settings.year?.otherTaxableIncome ?? 0;
+        document.getElementById('taxPaid').value = settings.year?.taxPaid ?? 0;
+        renderTaxEstimate();
+      } catch (error) {
+        document.getElementById('error').textContent = error.message;
+      }
+    }
+    function progressiveTax(income) {
+      const slices = [
+        { cap: 288000, rate: .10 },
+        { cap: 100000, rate: .25 },
+        { cap: 5612000, rate: .30 },
+        { cap: 3600000, rate: .325 },
+        { cap: Infinity, rate: .35 },
+      ];
+      let remaining = Math.max(0, income);
+      let tax = 0;
+      slices.forEach(slice => {
+        const taxable = Math.min(remaining, slice.cap);
+        tax += taxable * slice.rate;
+        remaining -= taxable;
+      });
+      return tax;
+    }
+    function renderTaxEstimate() {
+      if (!summary) return;
+      const sales = Number(summary.totals.invoiced) || 0;
+      const deductibleExpenses = Number(summary.totals.deductibleExpenses) || 0;
+      const profit = sales - deductibleExpenses;
+      const share = Math.max(0, Math.min(100, Number(document.getElementById('ownerShare').value) || 0));
+      const ownerBusinessIncome = Math.max(0, profit) * share / 100;
+      const otherIncome = Math.max(0, Number(document.getElementById('otherIncome').value) || 0);
+      const paid = Math.max(0, Number(document.getElementById('taxPaid').value) || 0);
+      const taxableIncome = ownerBusinessIncome + otherIncome;
+      const estimatedTax = Math.max(0, progressiveTax(taxableIncome) - 28800);
+      const balance = Math.max(0, estimatedTax - paid);
+      document.getElementById('sales').textContent = money.format(sales);
+      document.getElementById('deductible').textContent = money.format(deductibleExpenses);
+      document.getElementById('profit').textContent = money.format(profit);
+      document.getElementById('liability').textContent = money.format(estimatedTax);
+      document.getElementById('paid').textContent = money.format(paid);
+      document.getElementById('balance').textContent = money.format(balance);
+      document.getElementById('vatSales').textContent = money.format(sales);
+      const threshold = 5000000;
+      const notice = document.getElementById('vatNotice');
+      if (sales >= threshold) {
+        notice.className = 'notice alert';
+        notice.textContent = 'Recorded sales meet or exceed KES 5,000,000. Review VAT registration with KRA promptly; this tab does not calculate VAT payable.';
+      } else {
+        notice.className = 'notice good';
+        notice.textContent = `Recorded sales are ${money.format(threshold - sales)} below the KES 5,000,000 threshold. KRA also considers expected taxable supplies, not only completed sales.`;
+      }
+      document.getElementById('taxBreakdown').innerHTML = `
+        <div class="line"><span>Profit from recorded invoices less deductible expenses</span><strong>${money.format(profit)}</strong></div>
+        <div class="line"><span>Your business-profit share (${share.toFixed(1)}%)</span><strong>${money.format(ownerBusinessIncome)}</strong></div>
+        <div class="line"><span>Other taxable income entered</span><strong>${money.format(otherIncome)}</strong></div>
+        <div class="line"><span>Estimated taxable income used</span><strong>${money.format(taxableIncome)}</strong></div>
+        <div class="line"><span>Progressive tax before personal relief</span><strong>${money.format(progressiveTax(taxableIncome))}</strong></div>
+        <div class="line"><span>Resident personal relief applied</span><strong>${money.format(Math.min(28800, progressiveTax(taxableIncome)))}</strong></div>`;
+    }
+    async function saveTaxSettings(event) {
+      event.preventDefault();
+      try {
+        const response = await fetch('/api/tax-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            year: Number(yearFilter.value),
+            ownerSharePercent: Number(document.getElementById('ownerShare').value),
+            otherTaxableIncome: Number(document.getElementById('otherIncome').value),
+            taxPaid: Number(document.getElementById('taxPaid').value),
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Could not save assumptions');
+        document.getElementById('error').textContent = 'Tax assumptions saved.';
+        document.getElementById('error').style.color = '#2e7d32';
+        renderTaxEstimate();
+      } catch (error) {
+        document.getElementById('error').style.color = '#b3261e';
+        document.getElementById('error').textContent = error.message;
+      }
+    }
+  </script>
+</body>
+</html>

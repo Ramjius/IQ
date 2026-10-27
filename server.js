@@ -100,6 +100,11 @@ function requireAuth(req, res, next) {
   res.redirect('/login');
 }
 
+function requireApiAuth(req, res, next) {
+  if ((req.session && req.session.userId) || (req.user && req.user.id)) return next();
+  res.status(401).json({ error: 'Sign in to view and manage this financial data.' });
+}
+
 // Settings helper — fetch all settings as an object
 async function getSettings() {
   return new Promise((resolve, reject) => {
@@ -133,6 +138,12 @@ const connection = {
     });
   }
 };
+
+function queryRows(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    connection.query(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+  });
+}
 
 pool.connect((err, client, release) => {
   if (err) {
@@ -223,14 +234,18 @@ app.get('/', requireAuth, (req, res) => {
         .nav-menu {
           background-color: #212121;
           padding: 10px 20px;
-          text-align: center;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-wrap: wrap;
+          gap: 4px;
         }
         .nav-menu a {
           color: white;
           text-decoration: none;
-          margin: 0 15px;
-          font-size: 16px;
-          padding: 5px 10px;
+          margin: 0 4px;
+          font-size: 15px;
+          padding: 6px 10px;
           border-radius: 4px;
           transition: background-color 0.3s;
         }
@@ -440,6 +455,9 @@ app.get('/', requireAuth, (req, res) => {
         <a href="/invoices">Invoices</a>
         <a href="/quotations">Quotations</a>
         <a href="/clients">Clients</a>
+        <a href="/expenses">Expenses</a>
+        <a href="/analytics">Analytics</a>
+        <a href="/taxes">Taxes</a>
         <a href="/admin" style="margin-left:auto;background:#424242;padding:5px 14px;border-radius:4px;">&#9881; Admin</a>
       </div>
       <div class="container">
@@ -765,6 +783,18 @@ app.get('/quotations', requireAuth, (req, res) => {
 
 app.get('/clients', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'clients.html'));
+});
+
+app.get('/expenses', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'expenses.html'));
+});
+
+app.get('/analytics', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'analytics.html'));
+});
+
+app.get('/taxes', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'taxes.html'));
 });
 
 // Success and error pages
@@ -1129,6 +1159,262 @@ app.get('/api/dashboard', (req, res) => {
       res.json({ quotations, invoices });
     });
   });
+});
+
+const EXPENSE_CATEGORIES = [
+  'Rent', 'Utilities', 'Travel', 'Software', 'Professional fees',
+  'Equipment', 'Supplies', 'Marketing', 'Other'
+];
+
+function validateExpenseInput(body, res) {
+  const expenseDate = getOptionalIssueDate(body.expenseDate, res, 'expense');
+  if (expenseDate === undefined) return null;
+  if (!expenseDate) {
+    res.status(400).json({ error: 'Expense date is required' });
+    return null;
+  }
+  const supplier = typeof body.supplier === 'string' ? body.supplier.trim() : '';
+  const category = typeof body.category === 'string' ? body.category : '';
+  const submittedAmount = Number(body.amount);
+  const amount = Math.round(submittedAmount * 100) / 100;
+  if (!supplier) {
+    res.status(400).json({ error: 'Supplier is required' });
+    return null;
+  }
+  if (supplier.length > 160) {
+    res.status(400).json({ error: 'Supplier name must be 160 characters or fewer' });
+    return null;
+  }
+  if (!EXPENSE_CATEGORIES.includes(category)) {
+    res.status(400).json({ error: 'Choose a valid expense category' });
+    return null;
+  }
+  if (!Number.isFinite(submittedAmount) || amount <= 0 || amount > 999999999999) {
+    res.status(400).json({ error: 'Enter an expense amount greater than zero' });
+    return null;
+  }
+  if ((typeof body.description === 'string' && body.description.length > 500) ||
+      (typeof body.receiptReference === 'string' && body.receiptReference.length > 120)) {
+    res.status(400).json({ error: 'Description or receipt reference is too long' });
+    return null;
+  }
+  if (typeof body.taxDeductible !== 'boolean') {
+    res.status(400).json({ error: 'Choose whether this expense is tax deductible' });
+    return null;
+  }
+  return {
+    expenseDate,
+    supplier,
+    category,
+    description: typeof body.description === 'string' ? body.description.trim() : '',
+    amount,
+    taxDeductible: body.taxDeductible,
+    receiptReference: typeof body.receiptReference === 'string' ? body.receiptReference.trim() : '',
+  };
+}
+
+app.get('/api/expenses', requireApiAuth, async (req, res) => {
+  try {
+    const year = String(req.query.year || new Date().getFullYear());
+    let rows;
+    if (year === 'all') {
+      rows = await queryRows(
+        'SELECT id, expense_date, supplier, category, description, amount, tax_deductible, receipt_reference FROM expenses ORDER BY expense_date DESC, id DESC'
+      );
+    } else {
+      const numericYear = Number(year);
+      if (!Number.isInteger(numericYear) || numericYear < 2000 || numericYear > 2100) {
+        return res.status(400).json({ error: 'Choose a valid year' });
+      }
+      rows = await queryRows(
+        'SELECT id, expense_date, supplier, category, description, amount, tax_deductible, receipt_reference FROM expenses WHERE expense_date >= ?::date AND expense_date < ?::date ORDER BY expense_date DESC, id DESC',
+        [`${numericYear}-01-01`, `${numericYear + 1}-01-01`]
+      );
+    }
+    res.json(rows);
+  } catch (err) {
+    console.error('Expense list error:', err);
+    res.status(500).json({ error: 'Failed to load expenses' });
+  }
+});
+
+app.post('/api/expenses', requireApiAuth, async (req, res) => {
+  const expense = validateExpenseInput(req.body, res);
+  if (!expense) return;
+  try {
+    const rows = await queryRows(
+      'INSERT INTO expenses (expense_date, supplier, category, description, amount, tax_deductible, receipt_reference) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
+      [expense.expenseDate, expense.supplier, expense.category, expense.description, expense.amount, expense.taxDeductible, expense.receiptReference]
+    );
+    res.json({ success: true, id: rows[0].id });
+  } catch (err) {
+    console.error('Expense create error:', err);
+    res.status(500).json({ error: 'Failed to save expense' });
+  }
+});
+
+app.put('/api/expenses/:id', requireApiAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid expense ID' });
+  const expense = validateExpenseInput(req.body, res);
+  if (!expense) return;
+  try {
+    const rows = await queryRows(
+      'UPDATE expenses SET expense_date = ?, supplier = ?, category = ?, description = ?, amount = ?, tax_deductible = ?, receipt_reference = ?, updated_at = NOW() WHERE id = ? RETURNING id',
+      [expense.expenseDate, expense.supplier, expense.category, expense.description, expense.amount, expense.taxDeductible, expense.receiptReference, id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Expense update error:', err);
+    res.status(500).json({ error: 'Failed to update expense' });
+  }
+});
+
+app.delete('/api/expenses/:id', requireApiAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid expense ID' });
+  try {
+    const rows = await queryRows('DELETE FROM expenses WHERE id = ? RETURNING id', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Expense delete error:', err);
+    res.status(500).json({ error: 'Failed to delete expense' });
+  }
+});
+
+app.get('/api/finance-summary', requireApiAuth, async (req, res) => {
+  const year = Number(req.query.year || new Date().getFullYear());
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    return res.status(400).json({ error: 'Choose a valid year' });
+  }
+  const start = `${year}-01-01`;
+  const end = `${year + 1}-01-01`;
+  try {
+    const [invoiceRows, expenseRows, categoryRows] = await Promise.all([
+      queryRows(
+        `SELECT EXTRACT(MONTH FROM date)::integer AS month,
+          COALESCE(SUM(total_amount), 0) AS invoiced,
+          COALESCE(SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END), 0) AS collected
+         FROM invoices WHERE date >= ?::date AND date < ?::date
+         GROUP BY EXTRACT(MONTH FROM date) ORDER BY month`,
+        [start, end]
+      ),
+      queryRows(
+        `SELECT EXTRACT(MONTH FROM expense_date)::integer AS month,
+          COALESCE(SUM(amount), 0) AS total,
+          COALESCE(SUM(CASE WHEN tax_deductible THEN amount ELSE 0 END), 0) AS deductible
+         FROM expenses WHERE expense_date >= ?::date AND expense_date < ?::date
+         GROUP BY EXTRACT(MONTH FROM expense_date) ORDER BY month`,
+        [start, end]
+      ),
+      queryRows(
+        `SELECT category, COALESCE(SUM(amount), 0) AS total
+         FROM expenses WHERE expense_date >= ?::date AND expense_date < ?::date
+         GROUP BY category ORDER BY total DESC`,
+        [start, end]
+      ),
+    ]);
+    const months = Array.from({ length: 12 }, (_, index) => ({
+      month: index + 1,
+      invoiced: 0,
+      collected: 0,
+      expenses: 0,
+      deductibleExpenses: 0,
+    }));
+    invoiceRows.forEach(row => {
+      const month = months[Number(row.month) - 1];
+      if (month) {
+        month.invoiced = Number(row.invoiced);
+        month.collected = Number(row.collected);
+      }
+    });
+    expenseRows.forEach(row => {
+      const month = months[Number(row.month) - 1];
+      if (month) {
+        month.expenses = Number(row.total);
+        month.deductibleExpenses = Number(row.deductible);
+      }
+    });
+    const totals = months.reduce((sum, month) => ({
+      invoiced: sum.invoiced + month.invoiced,
+      collected: sum.collected + month.collected,
+      expenses: sum.expenses + month.expenses,
+      deductibleExpenses: sum.deductibleExpenses + month.deductibleExpenses,
+    }), { invoiced: 0, collected: 0, expenses: 0, deductibleExpenses: 0 });
+    res.json({
+      year,
+      months,
+      categories: categoryRows.map(row => ({ category: row.category, total: Number(row.total) })),
+      totals: {
+        ...totals,
+        outstanding: Math.max(0, totals.invoiced - totals.collected),
+        estimatedProfit: totals.invoiced - totals.deductibleExpenses,
+      },
+    });
+  } catch (err) {
+    console.error('Finance summary error:', err);
+    res.status(500).json({ error: 'Failed to load financial summary' });
+  }
+});
+
+app.get('/api/tax-settings', requireApiAuth, async (req, res) => {
+  try {
+    const rows = await queryRows('SELECT value FROM app_settings WHERE key = ?', ['tax_estimate_settings']);
+    let settings = { ownerSharePercent: 100, years: {} };
+    if (rows.length) {
+      try {
+        settings = { ...settings, ...JSON.parse(rows[0].value || '{}') };
+      } catch (parseErr) {
+        console.error('Invalid saved tax estimate settings; using defaults');
+      }
+    }
+    const year = String(req.query.year || new Date().getFullYear());
+    res.json({
+      ownerSharePercent: Number(settings.ownerSharePercent ?? 100),
+      year: settings.years?.[year] || { otherTaxableIncome: 0, taxPaid: 0 },
+    });
+  } catch (err) {
+    console.error('Tax settings read error:', err);
+    res.status(500).json({ error: 'Failed to load tax settings' });
+  }
+});
+
+app.post('/api/tax-settings', requireApiAuth, async (req, res) => {
+  const { year, ownerSharePercent, otherTaxableIncome, taxPaid } = req.body;
+  const numericYear = Number(year);
+  const share = Number(ownerSharePercent);
+  const otherIncome = Number(otherTaxableIncome);
+  const paid = Number(taxPaid);
+  if (!Number.isInteger(numericYear) || numericYear < 2000 || numericYear > 2100 ||
+      !Number.isFinite(share) || share < 0 || share > 100 ||
+      !Number.isFinite(otherIncome) || otherIncome < 0 ||
+      !Number.isFinite(paid) || paid < 0) {
+    return res.status(400).json({ error: 'Check the year, profit share, income, and tax paid values' });
+  }
+  try {
+    const rows = await queryRows('SELECT value FROM app_settings WHERE key = ?', ['tax_estimate_settings']);
+    let settings = { ownerSharePercent: 100, years: {} };
+    if (rows.length) {
+      try {
+        settings = { ...settings, ...JSON.parse(rows[0].value || '{}') };
+      } catch (parseErr) {
+        console.error('Invalid saved tax estimate settings; replacing with submitted values');
+      }
+    }
+    settings.ownerSharePercent = share;
+    settings.years = settings.years || {};
+    settings.years[String(numericYear)] = { otherTaxableIncome: otherIncome, taxPaid: paid };
+    await queryRows(
+      'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+      ['tax_estimate_settings', JSON.stringify(settings)]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Tax settings save error:', err);
+    res.status(500).json({ error: 'Failed to save tax settings' });
+  }
 });
 
 // Import from directory

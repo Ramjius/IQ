@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics - Ramtechnologies</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f4f4; color: #222; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #fff; }
+    header h1 { margin: 0; font-size: 30px; }
+    header img { height: 54px; }
+    .nav-menu { background: #212121; padding: 10px 18px; display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; }
+    .nav-menu a { color: #fff; text-decoration: none; padding: 7px 10px; border-radius: 4px; font-size: 14px; }
+    .nav-menu a:hover { background: #424242; }
+    .nav-menu a.active { background: #4caf50; }
+    main { max-width: 1160px; margin: 26px auto; padding: 0 16px 40px; }
+    .toolbar, .panel, .stat { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+    .toolbar { display: flex; align-items: center; gap: 12px; padding: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    .toolbar label { font-weight: 700; }
+    select { font: inherit; padding: 9px 11px; border: 1px solid #d5d5d5; border-radius: 6px; background: white; }
+    .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .stat { padding: 16px; }
+    .stat-label { color: #777; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .stat-value { font-size: 21px; font-weight: 700; margin-top: 7px; overflow-wrap: anywhere; }
+    .panel { padding: 20px; margin-bottom: 18px; }
+    .panel h2 { margin: 0 0 5px; font-size: 20px; }
+    .panel p { color: #666; font-size: 13px; line-height: 1.5; margin: 6px 0 14px; }
+    .chart-wrap { width: 100%; overflow-x: auto; }
+    svg { display: block; width: 100%; min-width: 720px; height: auto; }
+    .legend { display: flex; gap: 18px; color: #555; font-size: 13px; margin-top: 12px; }
+    .legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 520px; }
+    th, td { padding: 11px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f7f7f7; color: #555; font-size: 12px; text-transform: uppercase; }
+    td { font-size: 14px; }
+    .empty { color: #777; text-align: center; padding: 24px; }
+    .muted { color: #666; font-size: 12px; }
+    #error { color: #b3261e; margin: 12px 0; }
+    @media(max-width: 980px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+    @media(max-width: 600px) {
+      header { padding: 14px 16px; }
+      header h1 { font-size: 24px; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stat-value { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header><h1>Analytics</h1><img src="/logo.png" alt="Ramtechnologies logo" onerror="this.hidden=true"></header>
+  <nav class="nav-menu" aria-label="Main navigation">
+    <a href="/">Dashboard</a><a href="/invoices">Invoices</a><a href="/quotations">Quotations</a>
+    <a href="/clients">Clients</a><a href="/expenses">Expenses</a>
+    <a href="/analytics" class="active">Analytics</a><a href="/taxes">Taxes</a>
+  </nav>
+  <main>
+    <div class="toolbar"><label for="yearFilter">Reporting year</label><select id="yearFilter"></select></div>
+    <div id="error" role="alert"></div>
+    <div class="stats">
+      <section class="stat"><div class="stat-label">Invoiced</div><div class="stat-value" id="invoiced">—</div></section>
+      <section class="stat"><div class="stat-label">Marked paid</div><div class="stat-value" id="collected">—</div></section>
+      <section class="stat"><div class="stat-label">Not marked paid</div><div class="stat-value" id="outstanding">—</div></section>
+      <section class="stat"><div class="stat-label">Expenses</div><div class="stat-value" id="expenses">—</div></section>
+      <section class="stat"><div class="stat-label">Estimated profit before tax</div><div class="stat-value" id="profit">—</div></section>
+    </div>
+    <section class="panel">
+      <h2>Monthly invoiced revenue and expenses</h2>
+      <p>Revenue is based on all invoices issued in the selected year. Expenses are shown by recorded expense date.</p>
+      <div class="chart-wrap"><svg id="trendChart" viewBox="0 0 1000 340" role="img" aria-label="Monthly invoiced revenue and expenses"></svg></div>
+      <div class="legend"><span><i class="swatch" style="background:#4caf50"></i>Invoiced revenue</span><span><i class="swatch" style="background:#2196f3"></i>Expenses</span></div>
+    </section>
+    <section class="panel">
+      <h2>Expenses by category</h2>
+      <div class="table-wrap">
+        <table><thead><tr><th>Category</th><th>Total spent</th><th>Share of expenses</th></tr></thead><tbody id="categoryRows"></tbody></table>
+      </div>
+      <p class="muted">Profit is an operational estimate: invoiced amount less expenses marked tax deductible. It is not a set of audited accounts.</p>
+    </section>
+  </main>
+  <script>
+    const money = new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    const yearFilter = document.getElementById('yearFilter');
+    const currentYear = new Date().getFullYear();
+    for (let year = currentYear; year >= currentYear - 5; year--) yearFilter.add(new Option(String(year), String(year)));
+    yearFilter.addEventListener('change', loadSummary);
+    loadSummary();
+
+    function formatAxis(value) {
+      if (value >= 1000000) return `Ksh ${(value / 1000000).toFixed(value % 1000000 === 0 ? 0 : 1)}m`;
+      if (value >= 1000) return `Ksh ${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`;
+      return `Ksh ${Math.round(value)}`;
+    }
+    async function loadSummary() {
+      document.getElementById('error').textContent = '';
+      try {
+        const response = await fetch(`/api/finance-summary?year=${yearFilter.value}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load analytics');
+        document.getElementById('invoiced').textContent = money.format(data.totals.invoiced);
+        document.getElementById('collected').textContent = money.format(data.totals.collected);
+        document.getElementById('outstanding').textContent = money.format(data.totals.outstanding);
+        document.getElementById('expenses').textContent = money.format(data.totals.expenses);
+        document.getElementById('profit').textContent = money.format(data.totals.estimatedProfit);
+        renderChart(data.months);
+        renderCategories(data.categories, data.totals.expenses);
+      } catch (error) {
+        document.getElementById('error').textContent = error.message;
+      }
+    }
+    function renderChart(months) {
+      const svg = document.getElementById('trendChart');
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      const namespace = 'http://www.w3.org/2000/svg';
+      const add = (tag, attrs, text) => {
+        const element = document.createElementNS(namespace, tag);
+        Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, value));
+        if (text !== undefined) element.textContent = text;
+        svg.appendChild(element);
+        return element;
+      };
+      add('title', {}, 'Monthly invoiced revenue and expenses');
+      add('desc', {}, 'Grouped bars compare invoiced revenue with recorded expenses for each month.');
+      const width = 1000, height = 340, left = 95, right = 25, top = 24, bottom = 54;
+      const plotWidth = width - left - right, plotHeight = height - top - bottom;
+      const maxValue = Math.max(1, ...months.flatMap(item => [item.invoiced, item.expenses]));
+      const step = Math.pow(10, Math.floor(Math.log10(maxValue)));
+      const axisMax = Math.ceil(maxValue / step) * step || 1;
+      for (let index = 0; index <= 4; index++) {
+        const value = axisMax * (4 - index) / 4;
+        const y = top + plotHeight * index / 4;
+        add('line', { x1: left, y1: y, x2: width - right, y2: y, stroke: '#e5e5e5', 'stroke-width': 1 });
+        add('text', { x: left - 10, y: y + 4, 'text-anchor': 'end', fill: '#666', 'font-size': 11 }, formatAxis(value));
+      }
+      const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const slot = plotWidth / 12, barWidth = Math.min(22, slot * .3);
+      months.forEach((month, index) => {
+        const center = left + slot * (index + .5);
+        const bars = [
+          { value: month.invoiced, offset: -barWidth - 2, color: '#4caf50', label: 'Invoiced revenue' },
+          { value: month.expenses, offset: 2, color: '#2196f3', label: 'Expenses' },
+        ];
+        bars.forEach(bar => {
+          const barHeight = Math.max(0, (bar.value / axisMax) * plotHeight);
+          const rect = add('rect', {
+            x: center + bar.offset, y: top + plotHeight - barHeight,
+            width: barWidth, height: barHeight, fill: bar.color, rx: 2
+          });
+          const title = document.createElementNS(namespace, 'title');
+          title.textContent = `${names[index]} ${bar.label}: ${money.format(bar.value)}`;
+          rect.appendChild(title);
+        });
+        add('text', { x: center, y: height - 24, 'text-anchor': 'middle', fill: '#555', 'font-size': 11 }, names[index]);
+      });
+    }
+    function renderCategories(categories, totalExpenses) {
+      const tbody = document.getElementById('categoryRows');
+      if (!categories.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty">No expense data for this year.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = categories.map(item => {
+        const share = totalExpenses > 0 ? item.total / totalExpenses * 100 : 0;
+        return `<tr><td>${escapeHtml(item.category)}</td><td>${money.format(item.total)}</td><td>${share.toFixed(1)}%</td></tr>`;
+      }).join('');
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+  </script>
+</body>
+</html>
