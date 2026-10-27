@@ -17,6 +17,7 @@
     .form-group { margin-bottom: 15px; }
     .form-group label { display: block; font-weight: bold; margin-bottom: 5px; }
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    #paymentRecordFields[hidden] { display: none; }
     .form-row { display: flex; gap: 15px; }
     .form-row .form-group { flex: 1; min-width: 0; }
     .table-wrapper { width: 100%; overflow-x: auto; margin-bottom: 15px; }
@@ -95,9 +96,24 @@
         </div>
       </div>
 
-      <div class="form-group">
-        <label>Payment Details</label>
-        <input type="text" id="paymentDetails" name="paymentDetails" value="CHEQUE NAME: RAMTECHNOLOGIES">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="paymentMode">Payment Mode</label>
+          <select id="paymentMode" name="paymentMode">
+            <option value="CHEQUE">CHEQUE</option>
+            <option value="M-PESA">M-PESA</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row" id="paymentRecordFields" hidden>
+        <div class="form-group">
+          <label for="paymentDate">Payment Date</label>
+          <input type="date" id="paymentDate" name="paymentDate">
+        </div>
+        <div class="form-group">
+          <label for="transactionId">Transaction ID</label>
+          <input type="text" id="transactionId" name="transactionId" maxlength="120" placeholder="Enter transaction or cheque reference">
+        </div>
       </div>
 
       <h3>Items</h3>
@@ -135,6 +151,17 @@
   <script>
     let items = [];
     let editMode = false;
+    const statusSelect = document.getElementById('status');
+    statusSelect.addEventListener('change', updatePaymentFields);
+    updatePaymentFields();
+
+    function updatePaymentFields() {
+      const isPaid = statusSelect.value === 'paid';
+      const fields = document.getElementById('paymentRecordFields');
+      fields.hidden = !isPaid;
+      document.getElementById('paymentDate').required = isPaid;
+      document.getElementById('transactionId').required = isPaid;
+    }
 
     // Detect edit mode from URL
     const urlParams = new URLSearchParams(window.location.search);
@@ -161,11 +188,14 @@
           document.getElementById('originalInvoiceNumber').value = inv.invoice_number;
           document.getElementById('customerName').value = inv.customer_name || '';
           document.getElementById('address').value = inv.address || '';
-          document.getElementById('paymentDetails').value = inv.payment_details || 'CHEQUE NAME: RAMTECHNOLOGIES';
+          document.getElementById('paymentMode').value = inv.payment_mode === 'M-PESA' ? 'M-PESA' : 'CHEQUE';
+          document.getElementById('paymentDate').value = inv.payment_date ? String(inv.payment_date).slice(0, 10) : '';
+          document.getElementById('transactionId').value = inv.transaction_id || '';
           const statusEl = document.getElementById('status');
           for (let i = 0; i < statusEl.options.length; i++) {
             if (statusEl.options[i].value === inv.status) { statusEl.selectedIndex = i; break; }
           }
+          updatePaymentFields();
           items = Array.isArray(inv.items) ? inv.items : [];
           renderItems();
           updateTotal();
@@ -232,7 +262,9 @@
         originalInvoiceNumber: document.getElementById('originalInvoiceNumber').value,
         customerName: document.getElementById('customerName').value,
         address: document.getElementById('address').value,
-        paymentDetails: document.getElementById('paymentDetails').value,
+        paymentMode: document.getElementById('paymentMode').value,
+        paymentDate: document.getElementById('paymentDate').value,
+        transactionId: document.getElementById('transactionId').value.trim(),
         status: document.getElementById('status').value,
         items: items,
         totalAmount: document.getElementById('totalAmount').textContent
@@ -268,6 +300,10 @@
       const data = getFormData();
       if (!data.invoiceNumber) { alert('Please enter an invoice number'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
+      if (data.status === 'paid' && (!data.paymentDate || !data.transactionId)) {
+        alert('Enter the payment date and transaction ID for a paid invoice');
+        return;
+      }
       fetch('/api/save-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -282,6 +318,10 @@
       const data = getFormData();
       if (!data.invoiceNumber) { alert('Please enter an invoice number'); return; }
       if (!data.customerName) { alert('Please enter customer name'); return; }
+      if (data.status === 'paid' && (!data.paymentDate || !data.transactionId)) {
+        alert('Enter the payment date and transaction ID for a paid invoice');
+        return;
+      }
       fetch('/api/update-invoice', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -295,6 +335,10 @@
     function exportPDF() {
       const data = getFormData();
       if (!data.customerName) { alert('Please enter customer name'); return; }
+      if (data.status === 'paid' && (!data.paymentDate || !data.transactionId)) {
+        alert('Enter the payment date and transaction ID for a paid invoice');
+        return;
+      }
       fetch('/api/export-invoice-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

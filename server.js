@@ -143,6 +143,13 @@ pool.connect((err, client, release) => {
   console.log('Connected to PostgreSQL database');
 });
 
+pool.query(`
+  ALTER TABLE invoices
+    ADD COLUMN IF NOT EXISTS payment_mode TEXT NOT NULL DEFAULT 'CHEQUE',
+    ADD COLUMN IF NOT EXISTS payment_date DATE,
+    ADD COLUMN IF NOT EXISTS transaction_id TEXT
+`).catch(err => console.error('Error adding invoice payment fields:', err));
+
 // Create password_reset_tokens table if it doesn't exist
 pool.query(`
   CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -897,8 +904,34 @@ app.post('/api/save-quotation', (req, res) => {
 });
 
 // Save Invoice
+function getInvoicePaymentFields(req, res) {
+  const { status, paymentMode, paymentDate, transactionId } = req.body;
+  const mode = paymentMode || 'CHEQUE';
+  if (!['CHEQUE', 'M-PESA'].includes(mode)) {
+    res.status(400).json({ error: 'Payment mode must be CHEQUE or M-PESA' });
+    return null;
+  }
+  if (status === 'paid') {
+    const validDate = typeof paymentDate === 'string' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(paymentDate) &&
+      !Number.isNaN(Date.parse(`${paymentDate}T00:00:00Z`)) &&
+      new Date(`${paymentDate}T00:00:00Z`).toISOString().slice(0, 10) === paymentDate;
+    if (!validDate || typeof transactionId !== 'string' || !transactionId.trim()) {
+      res.status(400).json({ error: 'Payment date and transaction ID are required for a paid invoice' });
+      return null;
+    }
+  }
+  return {
+    paymentMode: mode,
+    paymentDate: status === 'paid' ? paymentDate : null,
+    transactionId: status === 'paid' ? transactionId.trim() : null,
+  };
+}
+
 app.post('/api/save-invoice', (req, res) => {
-  const { invoiceNumber, customerName, address, items, totalAmount, paymentDetails, status } = req.body;
+  const { invoiceNumber, customerName, address, items, totalAmount, status } = req.body;
+  const payment = getInvoicePaymentFields(req, res);
+  if (!payment) return;
 
   // Check for duplicate invoice number
   connection.query('SELECT id FROM invoices WHERE invoice_number = ?', [invoiceNumber], (dupErr, dupRows) => {
@@ -908,8 +941,8 @@ app.post('/api/save-invoice', (req, res) => {
     const upsertClient = `INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address`;
     connection.query(upsertClient, [customerName, address], (clientErr) => {
       if (clientErr) console.error('Error upserting client:', clientErr);
-      const query = `INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_details, status) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)`;
-      connection.query(query, [invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending'], (err) => {
+      const query = `INSERT INTO invoices (date, invoice_number, customer_name, address, items, total_amount, payment_mode, payment_date, transaction_id, status) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      connection.query(query, [invoiceNumber, customerName, address, JSON.stringify(items), totalAmount, payment.paymentMode, payment.paymentDate, payment.transactionId, status || 'pending'], (err) => {
         if (err) { console.error('Database Error:', err); return res.status(500).json({ error: 'Failed to save invoice' }); }
         res.json({ success: true });
       });
@@ -993,7 +1026,9 @@ app.get('/api/quotation/:quoteNumber', (req, res) => {
 
 // Update invoice (supports number change via originalInvoiceNumber)
 app.put('/api/update-invoice', (req, res) => {
-  const { invoiceNumber, originalInvoiceNumber, customerName, address, items, totalAmount, paymentDetails, status } = req.body;
+  const { invoiceNumber, originalInvoiceNumber, customerName, address, items, totalAmount, status } = req.body;
+  const payment = getInvoicePaymentFields(req, res);
+  if (!payment) return;
   const lookupNumber = originalInvoiceNumber || invoiceNumber;
   const newNumber = invoiceNumber;
 
@@ -1012,8 +1047,8 @@ app.put('/api/update-invoice', (req, res) => {
     const upsertClient = 'INSERT INTO clients (name, address) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address';
     connection.query(upsertClient, [customerName, address], (clientErr) => {
       if (clientErr) console.error('Error upserting client:', clientErr);
-      const query = `UPDATE invoices SET invoice_number = ?, customer_name = ?, address = ?, items = ?, total_amount = ?, payment_details = ?, status = ? WHERE invoice_number = ?`;
-      connection.query(query, [newNumber, customerName, address, JSON.stringify(items), totalAmount, paymentDetails, status || 'pending', lookupNumber], (err) => {
+      const query = `UPDATE invoices SET invoice_number = ?, customer_name = ?, address = ?, items = ?, total_amount = ?, payment_mode = ?, payment_date = ?, transaction_id = ?, status = ? WHERE invoice_number = ?`;
+      connection.query(query, [newNumber, customerName, address, JSON.stringify(items), totalAmount, payment.paymentMode, payment.paymentDate, payment.transactionId, status || 'pending', lookupNumber], (err) => {
         if (err) { console.error('Update error:', err); return res.status(500).json({ error: 'Failed to update invoice' }); }
         res.json({ success: true, newInvoiceNumber: newNumber });
       });
@@ -1343,7 +1378,7 @@ app.post('/api/export-quotation-pdf', (req, res) => {
 
 // Export Invoice as PDF - FIXED VERSION
 app.post('/api/export-invoice-pdf', (req, res) => {
-  const { invoiceNumber, customerName, address, items, totalAmount, status, paymentDetails } = req.body;
+  const { invoiceNumber, customerName, address, items, totalAmount, status, paymentMode, paymentDate, transactionId } = req.body;
   const fileName = `${invoiceNumber}-${customerName}.pdf`;
   const filePath = path.join(__dirname, fileName);
 
@@ -1460,12 +1495,18 @@ app.post('/api/export-invoice-pdf', (req, res) => {
   // Total Amount
   doc.fontSize(14).text(`Total Amount: Kshs ${totalAmount}`, 50, y + 20);
 
-  // Payment Details and Closing Text
+  // Payment information and Closing Text
   y += 60;
-  doc.fontSize(12).text('Payment Details:', 50, y);
+  doc.fontSize(12).text('Payment Mode:', 50, y);
   y += 20;
-  doc.text(paymentDetails || 'CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
+  doc.text(paymentMode || 'CHEQUE', 50, y);
   y += 20;
+  if (status === 'paid') {
+    doc.text(`Payment Date: ${paymentDate || ''}`, 50, y);
+    y += 20;
+    doc.text(`Transaction ID: ${transactionId || ''}`, 50, y);
+    y += 20;
+  }
   doc.text('We trust that we have addressed your requirements favorably and look forward to a continued healthy business relationship.', 50, y, { width: 500 });
   y += 40;
   doc.text('Yours Faithfully', 50, y);
@@ -1646,12 +1687,18 @@ app.get('/api/reprint-invoice/:invoiceNumber', (req, res) => {
     // Total Amount
     doc.fontSize(14).text(`Total Amount: Kshs ${invoice.total_amount}`, 50, y + 20);
 
-  // Payment Details and Closing Text with Signature Image
+  // Payment information and Closing Text with Signature Image
   y += 80; // Additional space before payment details
-  doc.fontSize(12).text('Payment Details:', 50, y);
+  doc.fontSize(12).text('Payment Mode:', 50, y);
   y += 20;
-  doc.text(invoice.payment_details || 'CHEQUE NAME: RAMTECHNOLOGIES', 50, y);
+  doc.text(invoice.payment_mode || 'CHEQUE', 50, y);
   y += 20;
+  if (invoice.status === 'paid') {
+    doc.text(`Payment Date: ${invoice.payment_date ? String(invoice.payment_date).slice(0, 10) : ''}`, 50, y);
+    y += 20;
+    doc.text(`Transaction ID: ${invoice.transaction_id || ''}`, 50, y);
+    y += 20;
+  }
     doc.text('We trust that we have addressed your requirements favorably and look forward to a continued healthy business relationship.', 50, y, { width: 500 });
     y += 40;
     doc.text('Yours Faithfully', 50, y);
