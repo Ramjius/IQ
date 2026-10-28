@@ -1177,6 +1177,14 @@ function validateExpenseInput(body, res) {
   const category = typeof body.category === 'string' ? body.category : '';
   const submittedAmount = Number(body.amount);
   const amount = Math.round(submittedAmount * 100) / 100;
+  let relatedInvoiceId = null;
+  if (body.relatedInvoiceId !== undefined && body.relatedInvoiceId !== null && body.relatedInvoiceId !== '') {
+    relatedInvoiceId = Number(body.relatedInvoiceId);
+    if (!Number.isInteger(relatedInvoiceId) || relatedInvoiceId <= 0) {
+      res.status(400).json({ error: 'Choose a valid related invoice' });
+      return null;
+    }
+  }
   if (!supplier) {
     res.status(400).json({ error: 'Supplier is required' });
     return null;
@@ -1210,7 +1218,26 @@ function validateExpenseInput(body, res) {
     amount,
     taxDeductible: body.taxDeductible,
     receiptReference: typeof body.receiptReference === 'string' ? body.receiptReference.trim() : '',
+    relatedInvoiceId,
   };
+}
+
+app.get('/api/invoice-options', requireApiAuth, async (req, res) => {
+  try {
+    const rows = await queryRows(
+      'SELECT id, invoice_number, customer_name, date, total_amount, status FROM invoices ORDER BY date DESC, id DESC'
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Invoice options error:', err);
+    res.status(500).json({ error: 'Failed to load invoices' });
+  }
+});
+
+async function linkedInvoiceExists(invoiceId) {
+  if (invoiceId === null) return true;
+  const rows = await queryRows('SELECT id FROM invoices WHERE id = ?', [invoiceId]);
+  return rows.length > 0;
 }
 
 app.get('/api/expenses', requireApiAuth, async (req, res) => {
@@ -1219,7 +1246,11 @@ app.get('/api/expenses', requireApiAuth, async (req, res) => {
     let rows;
     if (year === 'all') {
       rows = await queryRows(
-        'SELECT id, expense_date, supplier, category, description, amount, tax_deductible, receipt_reference FROM expenses ORDER BY expense_date DESC, id DESC'
+        `SELECT e.id, e.expense_date, e.supplier, e.category, e.description, e.amount,
+          e.tax_deductible, e.receipt_reference, e.related_invoice_id,
+          i.invoice_number AS related_invoice_number, i.customer_name AS related_invoice_customer
+         FROM expenses e LEFT JOIN invoices i ON i.id = e.related_invoice_id
+         ORDER BY e.expense_date DESC, e.id DESC`
       );
     } else {
       const numericYear = Number(year);
@@ -1227,7 +1258,12 @@ app.get('/api/expenses', requireApiAuth, async (req, res) => {
         return res.status(400).json({ error: 'Choose a valid year' });
       }
       rows = await queryRows(
-        'SELECT id, expense_date, supplier, category, description, amount, tax_deductible, receipt_reference FROM expenses WHERE expense_date >= ?::date AND expense_date < ?::date ORDER BY expense_date DESC, id DESC',
+        `SELECT e.id, e.expense_date, e.supplier, e.category, e.description, e.amount,
+          e.tax_deductible, e.receipt_reference, e.related_invoice_id,
+          i.invoice_number AS related_invoice_number, i.customer_name AS related_invoice_customer
+         FROM expenses e LEFT JOIN invoices i ON i.id = e.related_invoice_id
+         WHERE e.expense_date >= ?::date AND e.expense_date < ?::date
+         ORDER BY e.expense_date DESC, e.id DESC`,
         [`${numericYear}-01-01`, `${numericYear + 1}-01-01`]
       );
     }
@@ -1242,9 +1278,12 @@ app.post('/api/expenses', requireApiAuth, async (req, res) => {
   const expense = validateExpenseInput(req.body, res);
   if (!expense) return;
   try {
+    if (!await linkedInvoiceExists(expense.relatedInvoiceId)) {
+      return res.status(400).json({ error: 'The selected invoice no longer exists' });
+    }
     const rows = await queryRows(
-      'INSERT INTO expenses (expense_date, supplier, category, description, amount, tax_deductible, receipt_reference) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
-      [expense.expenseDate, expense.supplier, expense.category, expense.description, expense.amount, expense.taxDeductible, expense.receiptReference]
+      'INSERT INTO expenses (expense_date, supplier, category, description, amount, tax_deductible, receipt_reference, related_invoice_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id',
+      [expense.expenseDate, expense.supplier, expense.category, expense.description, expense.amount, expense.taxDeductible, expense.receiptReference, expense.relatedInvoiceId]
     );
     res.json({ success: true, id: rows[0].id });
   } catch (err) {
@@ -1259,9 +1298,12 @@ app.put('/api/expenses/:id', requireApiAuth, async (req, res) => {
   const expense = validateExpenseInput(req.body, res);
   if (!expense) return;
   try {
+    if (!await linkedInvoiceExists(expense.relatedInvoiceId)) {
+      return res.status(400).json({ error: 'The selected invoice no longer exists' });
+    }
     const rows = await queryRows(
-      'UPDATE expenses SET expense_date = ?, supplier = ?, category = ?, description = ?, amount = ?, tax_deductible = ?, receipt_reference = ?, updated_at = NOW() WHERE id = ? RETURNING id',
-      [expense.expenseDate, expense.supplier, expense.category, expense.description, expense.amount, expense.taxDeductible, expense.receiptReference, id]
+      'UPDATE expenses SET expense_date = ?, supplier = ?, category = ?, description = ?, amount = ?, tax_deductible = ?, receipt_reference = ?, related_invoice_id = ?, updated_at = NOW() WHERE id = ? RETURNING id',
+      [expense.expenseDate, expense.supplier, expense.category, expense.description, expense.amount, expense.taxDeductible, expense.receiptReference, expense.relatedInvoiceId, id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Expense not found' });
     res.json({ success: true });

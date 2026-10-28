@@ -41,7 +41,7 @@
     .edit { background: #ff9800; color: #fff; }
     .delete { background: #e53935; color: #fff; }
     .table-wrap { overflow-x: auto; }
-    table { width: 100%; min-width: 760px; border-collapse: collapse; }
+    table { width: 100%; min-width: 920px; border-collapse: collapse; }
     th, td { text-align: left; padding: 11px 10px; border-bottom: 1px solid #eee; }
     th { background: #f7f7f7; color: #555; font-size: 12px; text-transform: uppercase; }
     td { font-size: 14px; }
@@ -49,6 +49,7 @@
     .actions button { padding: 6px 9px; font-size: 12px; }
     .badge { display: inline-block; background: #e8f5e9; color: #256b36; border-radius: 14px; padding: 4px 8px; font-size: 12px; }
     .badge.no { background: #eee; color: #555; }
+    .related-customer { display: block; color: #777; font-size: 11px; margin-top: 3px; }
     .empty { text-align: center; color: #777; padding: 26px; }
     #toast { position: fixed; right: 20px; bottom: 20px; display: none; padding: 12px 16px; border-radius: 6px; color: white; background: #333; z-index: 10; }
     #toast.show { display: block; }
@@ -88,6 +89,9 @@
         <div class="form-grid">
           <div class="field"><label for="expenseDate">Date</label><input id="expenseDate" type="date" required></div>
           <div class="field"><label for="supplier">Supplier / payee</label><input id="supplier" maxlength="160" required></div>
+          <div class="field"><label for="relatedInvoiceId">Related invoice (optional)</label>
+            <select id="relatedInvoiceId" disabled><option value="">Loading invoices…</option></select>
+          </div>
           <div class="field"><label for="category">Category</label>
             <select id="category" required>
               <option>Rent</option><option>Utilities</option><option>Travel</option><option>Software</option>
@@ -110,7 +114,7 @@
       <h2>Expense records</h2>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Supplier</th><th>Category</th><th>Description</th><th>Amount</th><th>Tax status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Date</th><th>Supplier</th><th>Related invoice</th><th>Category</th><th>Description</th><th>Amount</th><th>Tax status</th><th>Actions</th></tr></thead>
           <tbody id="expenseRows"></tbody>
         </table>
       </div>
@@ -120,6 +124,8 @@
   <script>
     const money = new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', minimumFractionDigits: 2 });
     let expenses = [];
+    let invoices = [];
+    let invoiceOptionsLoaded = false;
     let editingId = null;
     const yearFilter = document.getElementById('yearFilter');
     const expenseForm = document.getElementById('expenseForm');
@@ -131,6 +137,7 @@
     document.getElementById('expenseDate').value = localToday();
     yearFilter.addEventListener('change', loadExpenses);
     expenseForm.addEventListener('submit', saveExpense);
+    loadInvoiceOptions();
     loadExpenses();
 
     function localToday() {
@@ -146,6 +153,31 @@
       toast.style.background = isError ? '#b3261e' : '#2e7d32';
       toast.classList.add('show');
       setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+    async function loadInvoiceOptions() {
+      try {
+        const response = await fetch('/api/invoice-options');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load invoices');
+        invoices = data;
+        invoiceOptionsLoaded = true;
+        renderInvoiceOptions();
+        renderExpenses();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }
+    function renderInvoiceOptions(selectedId = '') {
+      const select = document.getElementById('relatedInvoiceId');
+      const currentValue = selectedId || select.value;
+      select.replaceChildren(new Option('No related invoice', ''));
+      invoices.forEach(invoice => {
+        const issueDate = String(invoice.date || '').slice(0, 10);
+        const label = `${invoice.invoice_number} — ${invoice.customer_name} — ${issueDate} — ${money.format(Number(invoice.total_amount || 0))} (${invoice.status || 'unpaid'})`;
+        select.add(new Option(label, String(invoice.id)));
+      });
+      select.value = currentValue;
+      select.disabled = !invoiceOptionsLoaded;
     }
     async function loadExpenses() {
       try {
@@ -165,17 +197,18 @@
       document.getElementById('totalExpenses').textContent = money.format(total);
       document.getElementById('deductibleExpenses').textContent = money.format(deductible);
       if (!expenses.length) {
-        tbody.innerHTML = '<tr><td class="empty" colspan="7">No expenses found for this selection.</td></tr>';
+        tbody.innerHTML = '<tr><td class="empty" colspan="8">No expenses found for this selection.</td></tr>';
         return;
       }
       tbody.innerHTML = expenses.map(expense => `<tr>
         <td>${escapeHtml(String(expense.expense_date).slice(0, 10))}</td>
         <td>${escapeHtml(expense.supplier)}</td>
+        <td>${expense.related_invoice_number ? `${escapeHtml(expense.related_invoice_number)}<span class="related-customer">${escapeHtml(expense.related_invoice_customer || '')}</span>` : '—'}</td>
         <td>${escapeHtml(expense.category)}</td>
         <td>${escapeHtml(expense.description)}</td>
         <td>${money.format(Number(expense.amount))}</td>
         <td><span class="badge ${expense.tax_deductible ? '' : 'no'}">${expense.tax_deductible ? 'Deductible' : 'Not deductible'}</span></td>
-        <td><div class="actions"><button class="edit" onclick="editExpense(${Number(expense.id)})">Edit</button><button class="delete" onclick="deleteExpense(${Number(expense.id)})">Delete</button></div></td>
+        <td><div class="actions"><button class="edit" onclick="editExpense(${Number(expense.id)})" ${invoiceOptionsLoaded ? '' : 'disabled'}>Edit</button><button class="delete" onclick="deleteExpense(${Number(expense.id)})">Delete</button></div></td>
       </tr>`).join('');
     }
     function startNewExpense() {
@@ -190,6 +223,7 @@
       document.getElementById('formTitle').textContent = 'Edit expense';
       document.getElementById('expenseDate').value = String(expense.expense_date).slice(0, 10);
       document.getElementById('supplier').value = expense.supplier || '';
+      document.getElementById('relatedInvoiceId').value = expense.related_invoice_id ? String(expense.related_invoice_id) : '';
       document.getElementById('category').value = expense.category || 'Other';
       document.getElementById('amount').value = Number(expense.amount);
       document.getElementById('receiptReference').value = expense.receipt_reference || '';
@@ -203,6 +237,7 @@
       editingId = null;
       expenseForm.reset();
       document.getElementById('expenseDate').value = localToday();
+      document.getElementById('relatedInvoiceId').value = '';
       document.getElementById('formTitle').textContent = 'Add an expense';
       document.getElementById('saveButton').textContent = 'Save expense';
       document.getElementById('cancelButton').hidden = true;
@@ -212,6 +247,7 @@
       const payload = {
         expenseDate: document.getElementById('expenseDate').value,
         supplier: document.getElementById('supplier').value,
+        relatedInvoiceId: document.getElementById('relatedInvoiceId').value || null,
         category: document.getElementById('category').value,
         amount: document.getElementById('amount').value,
         receiptReference: document.getElementById('receiptReference').value,
