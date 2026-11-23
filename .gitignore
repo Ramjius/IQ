@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Keep database backups and uploaded financial import files out of source control.
+/backups/
+/uploads/invoices/*
+!/uploads/invoices/.gitkeep
+/uploads/quotations/*
+!/uploads/quotations/.gitkeep
