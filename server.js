@@ -347,6 +347,13 @@ app.get('/', requireAuth, (req, res) => {
         td {
           background-color: #fff3e0;
         }
+        td.payment-details {
+          min-width: 180px;
+          max-width: 260px;
+          overflow-wrap: anywhere;
+          font-size: 13px;
+          line-height: 1.5;
+        }
         tr:nth-child(even) td {
           background-color: #fff;
         }
@@ -505,6 +512,7 @@ app.get('/', requireAuth, (req, res) => {
                   <th>Invoice Number</th>
                   <th>Customer</th>
                   <th>Total Amount</th>
+                  <th>Payment Details</th>
                   <th>Status</th>
                   <th>Action</th>
                 </tr>
@@ -642,22 +650,58 @@ app.get('/', requireAuth, (req, res) => {
 
           if (paginatedInvoices.length === 0) {
             const row = document.createElement('tr');
-            row.innerHTML = \`<td colspan="6" style="text-align: center;">No invoices found</td>\`;
+            row.innerHTML = \`<td colspan="7" style="text-align: center;">No invoices found</td>\`;
             tbody.appendChild(row);
           } else {
             paginatedInvoices.forEach(i => {
               const row = document.createElement('tr');
-              row.innerHTML = \`
-                <td>\${new Date(i.date).toLocaleDateString()}</td>
-                <td>\${i.invoice_number}</td>
-                <td>\${i.customer_name}</td>
-                <td>Kshs \${i.total_amount}</td>
-                <td><span class="status \${i.status || 'pending'}">\${capitalizeFirstLetter(i.status || 'pending')}</span></td>
-                <td style="white-space: nowrap;">
-                  <button onclick="reprintInvoice('\${i.invoice_number}')">Reprint</button>
-                  <button onclick="editInvoice('\${i.invoice_number}')" style="background-color:#ff9800; margin-left:4px;">Edit</button>
-                </td>
-              \`;
+              const addCell = (value) => {
+                const cell = document.createElement('td');
+                cell.textContent = value == null ? '' : String(value);
+                row.appendChild(cell);
+                return cell;
+              };
+
+              addCell(new Date(i.date).toLocaleDateString());
+              addCell(i.invoice_number);
+              addCell(i.customer_name);
+              addCell(\`Kshs \${i.total_amount}\`);
+
+              const paymentCell = addCell('');
+              paymentCell.className = 'payment-details';
+              if (i.status === 'paid') {
+                [
+                  ['Mode', i.payment_mode],
+                  ['Date', i.payment_date ? String(i.payment_date).slice(0, 10) : '—'],
+                  ['Transaction ID', i.transaction_id]
+                ].forEach(([label, value]) => {
+                  const detail = document.createElement('div');
+                  detail.textContent = \`\${label}: \${value || '—'}\`;
+                  paymentCell.appendChild(detail);
+                });
+              } else {
+                paymentCell.textContent = '—';
+              }
+
+              const status = String(i.status || 'pending').toLowerCase();
+              const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+              const statusCell = addCell('');
+              const statusBadge = document.createElement('span');
+              statusBadge.className = \`status \${['paid', 'pending', 'overdue'].includes(status) ? status : 'pending'}\`;
+              statusBadge.textContent = statusLabel;
+              statusCell.appendChild(statusBadge);
+
+              const actionCell = addCell('');
+              actionCell.style.whiteSpace = 'nowrap';
+              const reprintButton = document.createElement('button');
+              reprintButton.textContent = 'Reprint';
+              reprintButton.addEventListener('click', () => reprintInvoice(i.invoice_number));
+              const editButton = document.createElement('button');
+              editButton.textContent = 'Edit';
+              editButton.style.backgroundColor = '#ff9800';
+              editButton.style.marginLeft = '4px';
+              editButton.addEventListener('click', () => editInvoice(i.invoice_number));
+              actionCell.append(reprintButton, editButton);
               tbody.appendChild(row);
             });
           }
@@ -1150,7 +1194,7 @@ app.put('/api/update-quotation', (req, res) => {
 // Get Dashboard Data
 app.get('/api/dashboard', (req, res) => {
   const quotationsQuery = 'SELECT date, quote_number, customer_name, total_amount FROM quotations';
-  const invoicesQuery = 'SELECT date, invoice_number, customer_name, total_amount, status FROM invoices';
+  const invoicesQuery = 'SELECT date, invoice_number, customer_name, total_amount, status, payment_mode, payment_date, transaction_id FROM invoices';
 
   connection.query(quotationsQuery, (err, quotations) => {
     if (err) return res.status(500).send('Failed to fetch quotations');
